@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Family Meal Planner</title>
+<!-- PWA: identifies this site as an installable app -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2d6a4f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Meal Plan">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #faf8f5;
+    color: #1f2937;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 16px; }
+  header.top {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding: 14px 18px; background: #ffffff;
+    border: 1px solid #e8e3da; border-radius: 12px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  header.top h1 {
+    margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em;
+    flex: 1 1 auto;
+  }
+  header.top .subtitle {
+    color: #6b7280; font-size: 13px; margin-top: 2px;
+  }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid #d1cabd; background: #ffffff; color: #1f2937;
+    cursor: pointer; transition: all 0.15s;
+  }
+  button:hover { background: #f5f1ea; border-color: #b8af9c; }
+  button.primary {
+    background: #2d6a4f; color: white; border-color: #2d6a4f;
+  }
+  button.primary:hover { background: #245840; border-color: #245840; }
+  .split-button { position: relative; display: inline-flex; }
+  .split-button .split-main { border-radius: 8px 0 0 8px; border-right: 1px solid rgba(255,255,255,0.25); }
+  .split-button .split-arrow {
+    border-radius: 0 8px 8px 0;
+    padding: 8px 8px;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: white;
+    border: 1px solid #e8e3da;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    padding: 4px;
+    min-width: 260px;
+    z-index: 50;
+    display: none;
+  }
+  .dropdown-menu.show { display: block; }
+  .dropdown-menu button {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #1f2937;
+  }
+  .dropdown-menu button:hover { background: #f5f1ea; }
+  button.ghost {
+    background: transparent; border-color: transparent; color: #6b7280;
+  }
+  button.ghost:hover { background: #f5f1ea; color: #1f2937; }
+  button.small { padding: 4px 8px; font-size: 12px; }
+  button.danger { color: #b91c1c; border-color: #fecaca; }
+  button.danger:hover { background: #fef2f2; border-color: #ef4444; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 10px;
+  }
+  @media (max-width: 1100px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .day-card {
+    background: #ffffff;
+    border: 1px solid #e8e3da;
+    border-radius: 10px;
+    padding: 10px;
+    display: flex; flex-direction: column; gap: 6px;
+    min-height: 220px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .day-card.today {
+    border-color: #2d6a4f;
+    box-shadow: 0 0 0 2px rgba(45,106,79,0.15);
+  }
+  .day-card.past { opacity: 0.55; }
+  .day-card .day-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #f0ebe1;
+    margin-bottom: 2px;
+  }
+  .day-card .dow {
+    font-weight: 600; font-size: 13px; color: #1f2937; letter-spacing: 0.02em;
+  }
+  .day-card .date {
+    font-size: 11px; color: #9ca3af;
+  }
+  .day-card.today .dow { color: #2d6a4f; }
+  .meal-row {
+    padding: 6px 8px;
+    padding-right: 26px;
+    border-radius: 6px;
+    background: #fafafa;
+    cursor: pointer;
+    transition: background 0.12s;
+    display: flex; flex-direction: column; gap: 2px;
+    border: 1px solid transparent;
+    position: relative;
+  }
+  .meal-row:hover { background: #f5f1ea; border-color: #e8e3da; }
+  .lock-toggle {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    color: #4b5563;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.12s, background 0.12s;
+  }
+  .lock-toggle.unlocked { opacity: 0.22; }
+  .meal-row:hover .lock-toggle.unlocked { opacity: 0.7; }
+  .lock-toggle:hover { background: rgba(0,0,0,0.08); opacity: 1 !important; }
+  .meal-row .label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #9ca3af; font-weight: 600;
+  }
+  .meal-row.breakfast .label { color: #b45309; }
+  .meal-row.lunch .label { color: #047857; }
+  .meal-row.dinner .label { color: #1d4ed8; }
+  .meal-row.snack .label { color: #be185d; }
+  .meal-row .meal-name {
+    font-size: 12px; line-height: 1.3; color: #1f2937;
+  }
+  .meal-row.grandma {
+    background: #fef3c7; border-color: #fde68a;
+  }
+  .meal-row.grandma:hover { background: #fde68a; border-color: #fbbf24; }
+  .meal-row.grandma .meal-name { color: #92400e; font-style: italic; }
+  .meal-row.fixed {
+    background: #ede9fe; border-color: #ddd6fe;
+  }
+  .meal-row.fixed:hover { background: #e6e0fa; }
+  .meal-row.fixed::after {
+    content: "📌"; font-size: 10px; position: absolute;
+  }
+  .meal-row .lock-icon {
+    font-size: 9px; color: #7c3aed; margin-left: 4px;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; padding: 16px;
+  }
+  .modal {
+    background: white; border-radius: 12px; padding: 20px;
+    max-width: 560px; width: 100%;
+    max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+  }
+  .modal h2 { margin: 0 0 4px 0; font-size: 17px; font-weight: 600; }
+  .modal .modal-subtitle { font-size: 13px; color: #6b7280; margin-bottom: 14px; }
+  .modal-footer {
+    display: flex; justify-content: flex-end; gap: 8px;
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid #f0ebe1;
+  }
+  .swap-option {
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #e8e3da; margin-bottom: 6px;
+    display: flex; justify-content: space-between; align-items: center;
+    transition: all 0.12s;
+  }
+  .swap-option:hover { background: #f5f1ea; border-color: #b8af9c; }
+  .swap-option.current { background: #ecfdf5; border-color: #6ee7b7; }
+  .swap-option .cat-tag {
+    font-size: 10px; padding: 2px 7px; border-radius: 4px;
+    background: #f5f1ea; color: #6b7280; text-transform: capitalize;
+  }
+  .swap-section-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #9ca3af; font-weight: 600;
+    margin: 14px 0 6px 0;
+  }
+
+  /* Pool editor */
+  .pool-section { margin-bottom: 20px; }
+  .pool-section h3 {
+    margin: 0 0 10px 0; font-size: 14px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .pool-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; border-bottom: 1px solid #f5f1ea;
+  }
+  .pool-item:last-child { border-bottom: none; }
+  .pool-item .name { flex: 1; font-size: 13px; }
+  .pool-item input.name-input {
+    flex: 1; padding: 4px 6px; border: 1px solid #e8e3da; border-radius: 4px;
+    font: inherit; font-size: 13px;
+  }
+  .pool-item select {
+    font: inherit; font-size: 12px;
+    padding: 4px 6px; border: 1px solid #e8e3da; border-radius: 4px;
+    background: white;
+  }
+  .pool-item .checkbox-label {
+    font-size: 11px; color: #6b7280; display: flex; align-items: center; gap: 4px;
+  }
+  .add-row {
+    display: flex; gap: 6px; margin-top: 8px; padding-top: 8px;
+    border-top: 1px dashed #e8e3da;
+  }
+  .add-row input { flex: 1; padding: 6px 8px; border: 1px solid #e8e3da; border-radius: 4px; font: inherit; font-size: 13px; }
+  .add-row select { padding: 6px 8px; border: 1px solid #e8e3da; border-radius: 4px; font: inherit; font-size: 13px; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 20px; right: 20px;
+    background: #1f2937; color: white;
+    padding: 10px 16px; border-radius: 8px;
+    font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    opacity: 0; transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  .stat-bar {
+    display: flex; gap: 16px; padding: 8px 12px; background: #f5f1ea;
+    border-radius: 8px; margin-bottom: 12px; font-size: 12px;
+    color: #6b7280;
+  }
+  .stat-bar strong { color: #1f2937; font-weight: 600; }
+
+  details summary {
+    cursor: pointer; padding: 8px 0; font-size: 13px; font-weight: 500;
+  }
+  details summary:hover { color: #2d6a4f; }
+  .field-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .field-row label { font-size: 13px; color: #6b7280; min-width: 90px; }
+  .field-row input[type="date"] { padding: 6px 8px; border: 1px solid #e8e3da; border-radius: 4px; font: inherit; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="top">
+    <div style="flex: 1 1 auto;">
+      <h1>Family Meal Planner</h1>
+      <div class="subtitle" id="dateRangeLabel">14-day plan</div>
+    </div>
+    <div class="actions">
+      <button onclick="openSettings()">⚙ Settings</button>
+      <button onclick="openPoolEditor()">📝 Edit Pool</button>
+      <div class="split-button">
+        <button class="primary split-main" onclick="regenerateFromToday()">🔄 Regenerate</button>
+        <button class="primary split-arrow" onclick="toggleRegenMenu(event)" title="More regenerate options">▾</button>
+        <div class="dropdown-menu" id="regenMenu">
+          <button onclick="closeRegenMenu();regenerateFresh();">
+            <div style="font-weight:600;font-size:13px;">Regenerate fresh</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px;">Clear all locks and reshuffle. Keeps your pool, rules, and history.</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="stat-bar" id="statBar"></div>
+
+  <div class="grid" id="planGrid"></div>
+</div>
+
+<div id="modalRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+// ====================================================================
+// DEFAULT DATA — pre-populated with Daniel's family meal pool
+// ====================================================================
+
+const DEFAULT_LUNCH_DINNER = [
+  { id: "ld_tonkotsu",     name: "Tonkotsu Ramen",                                       category: "ramen",         lunchOnly: true },
+  { id: "ld_chickenrice",  name: "Chicken Rice",                                          category: "chicken-rice" },
+  { id: "ld_friedrice",    name: "Fried Rice",                                            category: "fried-rice" },
+  { id: "ld_friedbeehoon", name: "Fried Beehoon",                                         category: "beehoon" },
+  { id: "ld_whitebeehoon", name: "White Beehoon",                                         category: "beehoon" },
+  { id: "ld_ishiro",       name: "Ishiro Teriyaki Chicken Rice",                          category: "japanese-rice" },
+  { id: "ld_saba",         name: "Saba Fish with Rice",                                   category: "japanese-rice" },
+  { id: "ld_fishball",     name: "Fishball Noodle",                                       category: "noodle" },
+  { id: "ld_wanton",       name: "Wanton Noodle",                                         category: "noodle" },
+  { id: "ld_teriyakisalm", name: "Teriyaki Salmon with Omelette and Rice",                category: "japanese-rice" },
+  { id: "ld_eggtofu",      name: "Egg Tofu Mushroom Chicken with Rice",                   category: "chinese-rice" },
+  { id: "ld_sweetpork",    name: "Sweet Pork Rice",                                       category: "japanese-rice" },
+  { id: "ld_steampork",    name: "Steam Pork Tofu with Omelette and Rice",                category: "chinese-rice" },
+  { id: "ld_tomatopasta",  name: "Tomato Pasta with Beef and Mushroom",                   category: "pasta" },
+  { id: "ld_aglio",        name: "Pasta Aglio Olio with Chicken and Mushroom",            category: "pasta" },
+  { id: "ld_creampasta",   name: "Cream Pasta with Salmon, Prawn, Spinach and Mushroom",  category: "pasta" },
+  { id: "ld_mac",          name: "Mac and Cheese with Chicken",                           category: "pasta" },
+  { id: "ld_chickenbroc",  name: "Chicken Broccoli Stir Fry with Rice",                   category: "chinese-rice" },
+  { id: "ld_friednoodles", name: "Fried Noodles",                                         category: "noodle" },
+  { id: "ld_teriyakifr",   name: "Teriyaki Sauce Fried Rice",                             category: "fried-rice" },
+  { id: "ld_oysterfr",     name: "Oyster Sauce Fried Rice",                               category: "fried-rice" },
+  { id: "ld_panfried",     name: "Pan Fried Chicken Thigh with Cabbage, Egg and Rice",    category: "chinese-rice" },
+  { id: "ld_dtf",          name: "Din Tai Fung Fried Rice",                               category: "fried-rice" },
+  { id: "ld_toriq",        name: "Tori Q",                                                category: "japanese-rice" }
+];
+
+// Breakfast: 3 solo options + all 2-item combos from a set of 5 items
+const BREAKFAST_SOLOS = [
+  { id: "bf_croissant",  name: "1 Croissant",      category: "pastry", items: ["croissant"] },
+  { id: "bf_lotus2",     name: "2 Lotus Bread",    category: "bread",  items: ["lotus"] },
+  { id: "bf_eggmayo2",   name: "2 Egg Mayo Bread", category: "bread",  items: ["eggmayo"] }
+];
+const BREAKFAST_COMBO_ITEMS = [
+  { code: "lotus",   name: "1 Lotus Bread",   category: "bread" },
+  { code: "sausage", name: "1 Sausage + Egg", category: "egg" },
+  { code: "kaya",    name: "1 Kaya Toast",    category: "bread" },
+  { code: "banana",  name: "2 Banana Cake",   category: "cake" },
+  { code: "milk",    name: "3 Milk Bits",     category: "biscuit" }
+];
+
+function buildDefaultBreakfasts() {
+  const list = [...BREAKFAST_SOLOS];
+  for (let i = 0; i < BREAKFAST_COMBO_ITEMS.length; i++) {
+    for (let j = i + 1; j < BREAKFAST_COMBO_ITEMS.length; j++) {
+      const a = BREAKFAST_COMBO_ITEMS[i];
+      const b = BREAKFAST_COMBO_ITEMS[j];
+      list.push({
+        id: "bf_" + a.code + "_" + b.code,
+        name: a.name + " + " + b.name,
+        category: "combo-" + [a.category, b.category].sort().join("-"),
+        items: [a.code, b.code]
+      });
+    }
+  }
+  return list;
+}
+
+const DEFAULT_BREAKFASTS = buildDefaultBreakfasts();
+
+const DEFAULT_SNACKS = [
+  { id: "sn_apples",     name: "Apples",            category: "fruit" },
+  { id: "sn_cashews",    name: "Cashew Nuts",       category: "nuts" },
+  { id: "sn_cheesebis",  name: "Cheese Biscuits",   category: "biscuit" },
+  { id: "sn_digestive",  name: "Digestive Biscuits", category: "biscuit" },
+  { id: "sn_banana",     name: "Banana",            category: "fruit" },
+  { id: "sn_honeystars", name: "Honey Stars",       category: "cereal" },
+  { id: "sn_tasty",      name: "Tasty Biscuits",    category: "biscuit" },
+  { id: "sn_oreo",       name: "Mini Oreo",         category: "biscuit" },
+  { id: "sn_marie",      name: "Marie Biscuit",     category: "biscuit" },
+  { id: "sn_square",     name: "Square Biscuit",    category: "biscuit" },
+  { id: "sn_cornflakes", name: "Cornflakes",        category: "cereal" }
+];
+
+// Fixed weekly rules. dayOfWeek: 0=Sun, 1=Mon, ..., 6=Sat
+const DEFAULT_FIXED_RULES = [
+  { dayOfWeek: 0, slot: "lunch",  type: "grandma", label: "At Grandma's" },
+  { dayOfWeek: 3, slot: "dinner", type: "grandma", label: "At Grandma's" },
+  { dayOfWeek: 5, slot: "dinner", type: "grandma", label: "At Grandma's" },
+  { dayOfWeek: 6, slot: "dinner", type: "fixed-meal", mealId: "ld_dtf" },
+  { dayOfWeek: 6, slot: "snack",  type: "fixed-text", label: "Hashbrown" }
+];
+
+const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// Generator processes slots in this order so usage of lunch is applied before dinner (same-day spacing)
+const GEN_SLOT_ORDER = ["breakfast", "lunch", "dinner", "snack"];
+// Display order shown in each day card
+const SLOT_ORDER = ["breakfast", "snack", "lunch", "dinner"];
+const SLOT_LABELS = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Snack" };
+
+// ====================================================================
+// STATE
+// ====================================================================
+
+const STORAGE_KEY = "mealPlanner.v1";
+
+function defaultState() {
+  // Default start date: next Monday from today (or today if today is Monday)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dow = today.getDay();
+  const daysUntilMonday = dow === 1 ? 0 : (8 - dow) % 7 || 7;
+  const start = new Date(today);
+  start.setDate(today.getDate() + daysUntilMonday);
+
+  return {
+    pool: {
+      breakfasts: DEFAULT_BREAKFASTS,
+      lunchDinner: DEFAULT_LUNCH_DINNER,
+      snacks: DEFAULT_SNACKS
+    },
+    fixedRules: DEFAULT_FIXED_RULES,
+    plan: null,         // { startDate: ISO, days: [...] }
+    startDateISO: toISO(start),
+    history: []         // [{ date, slot, mealId, category }] — last 21 days for recency context
+  };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultState();
+    const parsed = JSON.parse(raw);
+    // Merge with defaults to handle schema additions later
+    const base = defaultState();
+    return Object.assign({}, base, parsed, {
+      pool: Object.assign({}, base.pool, parsed.pool || {}),
+    });
+  } catch (e) {
+    console.error("Failed to load state", e);
+    return defaultState();
+  }
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+let state = loadState();
+
+// ====================================================================
+// DATE HELPERS
+// ====================================================================
+
+function toISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function fromISO(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function addDays(d, n) {
+  const r = new Date(d);
+  r.setDate(d.getDate() + n);
+  return r;
+}
+function todayISO() {
+  const t = new Date();
+  t.setHours(0,0,0,0);
+  return toISO(t);
+}
+function formatShortDate(d) {
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[d.getMonth()]} ${d.getDate()}`;
+}
+
+// ====================================================================
+// LOOKUP HELPERS
+// ====================================================================
+
+function findMeal(mealId) {
+  if (!mealId) return null;
+  return [
+    ...state.pool.breakfasts,
+    ...state.pool.lunchDinner,
+    ...state.pool.snacks
+  ].find(m => m.id === mealId) || null;
+}
+
+function getFixedAssignment(date, slot) {
+  const dow = date.getDay();
+  return state.fixedRules.find(r => r.dayOfWeek === dow && r.slot === slot) || null;
+}
+
+// ====================================================================
+// PLAN GENERATOR
+// ====================================================================
+
+function generatePlan(startISO, cellAnchors = null) {
+  // cellAnchors: Map of "YYYY-MM-DD|slot" -> cell content to preserve (past days + locked future cells)
+  const start = fromISO(startISO);
+  const days = [];
+
+  // Usage trackers — each map: key -> Set<dayIdx> (day index relative to plan start; negative from history)
+  const usage = { meals: {}, categories: {}, bfItems: {} };
+
+  // 1) Seed usage from history (last 14 days before start)
+  for (const h of (state.history || [])) {
+    const histDate = fromISO(h.date);
+    const diff = Math.floor((histDate - start) / 86400000);
+    if (diff < 0 && diff >= -14) {
+      if (h.mealId) addUse(usage.meals, h.mealId, diff);
+      if (h.category) addUse(usage.categories, h.category, diff);
+      if (h.bfItems) for (const it of h.bfItems) addUse(usage.bfItems, it, diff);
+    }
+  }
+
+  // 2) Pre-populate from anchors so unlocked picks see future locks too (lookahead)
+  if (cellAnchors) {
+    for (const [key, cell] of cellAnchors) {
+      const parts = key.split("|");
+      const iso = parts[0], slot = parts[1];
+      const idx = Math.floor((fromISO(iso) - start) / 86400000);
+      if (idx < 0 || idx >= 14) continue;
+      if (cell && cell.mealId) {
+        const m = findMeal(cell.mealId);
+        if (m) {
+          addUse(usage.meals, m.id, idx);
+          addUse(usage.categories, m.category, idx);
+          if (slot === "breakfast" && m.items) {
+            for (const it of m.items) addUse(usage.bfItems, it, idx);
+          }
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < 14; i++) {
+    const date = addDays(start, i);
+    const iso = toISO(date);
+    const day = { date: iso, breakfast: null, lunch: null, dinner: null, snack: null };
+
+    for (const slot of GEN_SLOT_ORDER) {
+      // a. Anchored cell takes absolute priority (past day or user-locked)
+      const anchorKey = `${iso}|${slot}`;
+      const anchor = cellAnchors ? cellAnchors.get(anchorKey) : null;
+      if (anchor) {
+        day[slot] = { ...anchor };
+        // Usage already recorded during pre-population above
+        continue;
+      }
+
+      // b. Check fixed weekly rule
+      const fixed = getFixedAssignment(date, slot);
+      if (fixed) {
+        if (fixed.type === "grandma") {
+          day[slot] = { kind: "grandma", label: fixed.label || "At Grandma's", locked: false };
+        } else if (fixed.type === "fixed-meal") {
+          const m = findMeal(fixed.mealId);
+          day[slot] = { kind: "fixed-meal", mealId: fixed.mealId, name: m ? m.name : "(missing)", locked: false };
+          if (m) {
+            addUse(usage.meals, m.id, i);
+            addUse(usage.categories, m.category, i);
+          }
+        } else if (fixed.type === "fixed-text") {
+          day[slot] = { kind: "fixed-text", label: fixed.label, locked: false };
+        }
+        continue;
+      }
+
+      // c. Pick from pool
+      const candidates = candidatePoolFor(slot);
+      if (candidates.length === 0) {
+        day[slot] = null;
+        continue;
+      }
+      const pick = pickBestCandidate(candidates, slot, i, usage);
+      if (pick) {
+        day[slot] = { kind: "planned", mealId: pick.id, name: pick.name, locked: false };
+        addUse(usage.meals, pick.id, i);
+        addUse(usage.categories, pick.category, i);
+        if (slot === "breakfast" && pick.items) {
+          for (const it of pick.items) addUse(usage.bfItems, it, i);
+        }
+      }
+    }
+
+    days.push(day);
+  }
+
+  return { startDate: startISO, days };
+}
+
+function candidatePoolFor(slot) {
+  if (slot === "breakfast") return state.pool.breakfasts;
+  if (slot === "snack")     return state.pool.snacks;
+  // lunch/dinner share pool
+  const all = state.pool.lunchDinner;
+  if (slot === "lunch")  return all;
+  // dinner: exclude lunch-only
+  return all.filter(m => !m.lunchOnly);
+}
+
+// Usage helpers — usage maps are { key -> Set<dayIdx> }
+function addUse(map, key, idx) {
+  if (!map[key]) map[key] = new Set();
+  map[key].add(idx);
+}
+function minDistTo(map, key, idx) {
+  const s = map[key];
+  if (!s || s.size === 0) return Infinity;
+  let min = Infinity;
+  for (const u of s) {
+    const d = Math.abs(idx - u);
+    if (d < min) min = d;
+  }
+  return min;
+}
+
+function pickBestCandidate(candidates, slot, dayIdx, usage) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const c of candidates) {
+    // Use minimum-distance-in-either-direction so future anchors push earlier picks away too
+    const distMeal = minDistTo(usage.meals, c.id, dayIdx);
+    const distCat  = minDistTo(usage.categories, c.category, dayIdx);
+
+    // Base score: heavily prefer meals not used recently (in either direction)
+    let score = (distMeal === Infinity ? 21 : Math.min(distMeal, 21)) * 10;
+
+    // Category spacing — strong enough to dominate the "never used" bonus
+    if (distCat === 0)       score -= 1000;  // same day (lunch→dinner) — effectively forbidden
+    else if (distCat === 1)  score -= 200;   // adjacent day — strong avoid
+    else if (distCat === 2)  score -= 50;
+    else if (distCat === 3)  score -= 15;
+
+    // Snack-specific: biscuits cluster easily because so many exist. Push them further apart.
+    if (slot === "snack" && c.category === "biscuit" && distCat <= 2) score -= 100;
+
+    // Breakfast item-level spacing: penalize if any underlying item (Lotus Bread, Kaya Toast, etc.) is close by
+    if (slot === "breakfast" && c.items) {
+      for (const item of c.items) {
+        const distItem = minDistTo(usage.bfItems, item, dayIdx);
+        if (distItem === 0)      score -= 1000;
+        else if (distItem === 1) score -= 120;
+        else if (distItem === 2) score -= 40;
+        else if (distItem === 3) score -= 10;
+      }
+    }
+
+    // Light randomness for tiebreaking (only meaningful when scores are close)
+    score += Math.random() * 4;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  return best;
+}
+
+// ====================================================================
+// RENDER
+// ====================================================================
+
+function ensurePlan() {
+  if (!state.plan || !state.plan.startDate) {
+    state.plan = generatePlan(state.startDateISO);
+    saveState();
+  }
+}
+
+function render() {
+  ensurePlan();
+  renderHeader();
+  renderStats();
+  renderGrid();
+}
+
+function renderHeader() {
+  const start = fromISO(state.plan.startDate);
+  const end = addDays(start, 13);
+  document.getElementById("dateRangeLabel").textContent =
+    `${formatShortDate(start)} — ${formatShortDate(end)}, ${end.getFullYear()}`;
+}
+
+function renderStats() {
+  const bar = document.getElementById("statBar");
+  const days = state.plan.days;
+  const today = todayISO();
+  const usedMealIds = new Set();
+  let plannedCount = 0;
+  let grandmaCount = 0;
+  let lockedCount = 0;
+  for (const d of days) {
+    for (const slot of SLOT_ORDER) {
+      const v = d[slot];
+      if (!v) continue;
+      if (v.kind === "grandma") grandmaCount++;
+      else if (v.mealId) { usedMealIds.add(v.mealId); plannedCount++; }
+      // Count locks only on today + future cells (past is implicitly anchored, not user-locked)
+      if (v.locked && d.date >= today) lockedCount++;
+    }
+  }
+  bar.innerHTML =
+    `<span><strong>${plannedCount}</strong> meals planned</span>` +
+    `<span><strong>${usedMealIds.size}</strong> unique dishes used</span>` +
+    `<span><strong>${grandmaCount}</strong> slots at Grandma's</span>` +
+    `<span>🔒 <strong>${lockedCount}</strong> locked</span>`;
+}
+
+function renderGrid() {
+  const grid = document.getElementById("planGrid");
+  grid.innerHTML = "";
+  const today = todayISO();
+  for (let i = 0; i < state.plan.days.length; i++) {
+    const day = state.plan.days[i];
+    const date = fromISO(day.date);
+    const card = document.createElement("div");
+    card.className = "day-card";
+    if (day.date === today) card.classList.add("today");
+    if (day.date < today) card.classList.add("past");
+
+    const dow = DOW_LABELS[date.getDay()];
+    card.innerHTML = `
+      <div class="day-header">
+        <div class="dow">${dow}</div>
+        <div class="date">${formatShortDate(date)}</div>
+      </div>
+    `;
+    const isPast = day.date < today;
+    for (const slot of SLOT_ORDER) {
+      const cell = day[slot];
+      const row = document.createElement("div");
+      row.className = `meal-row ${slot}`;
+      let label = SLOT_LABELS[slot];
+      let mealName = "—";
+      let isClickable = true;
+      if (cell) {
+        if (cell.kind === "grandma") {
+          row.classList.add("grandma");
+          mealName = cell.label;
+        } else if (cell.kind === "fixed-meal" || cell.kind === "fixed-text") {
+          row.classList.add("fixed");
+          mealName = cell.name || cell.label;
+        } else if (cell.kind === "cleared") {
+          mealName = "(empty)";
+        } else if (cell.mealId || cell.name) {
+          mealName = cell.name;
+        }
+        if (cell.locked) row.classList.add("locked");
+      }
+      let lockBtn = "";
+      // Lock icon: prominent when locked, faint when unlocked (visible on hover). Past days don't get one.
+      if (!isPast && cell) {
+        const isLocked = !!cell.locked;
+        const icon = isLocked ? "\u{1F512}" : "\u{1F513}";
+        const cls = isLocked ? "lock-toggle locked" : "lock-toggle unlocked";
+        const title = isLocked
+          ? "Locked — preserve on Regenerate. Click to unlock."
+          : "Click to lock — Regenerate will preserve this cell.";
+        lockBtn = `<button class="${cls}" title="${title}" onclick="toggleLock(${i},'${slot}',event)">${icon}</button>`;
+      }
+      row.innerHTML = `${lockBtn}<div class="label">${label}</div><div class="meal-name">${escapeHtml(mealName)}</div>`;
+      if (isClickable) {
+        row.addEventListener("click", () => openSwapModal(i, slot));
+      }
+      card.appendChild(row);
+    }
+    grid.appendChild(card);
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+// ====================================================================
+// SWAP MODAL
+// ====================================================================
+
+function openSwapModal(dayIdx, slot) {
+  const day = state.plan.days[dayIdx];
+  const cell = day[slot];
+  const date = fromISO(day.date);
+  const candidates = candidatePoolFor(slot);
+  const currentMealId = cell && cell.mealId ? cell.mealId : null;
+
+  // Compute spacing context for hints
+  const usage = computeUsageAroundDay(dayIdx);
+
+  // Sort candidates: prefer the furthest from any past/future neighbor
+  const scored = candidates.map(c => {
+    const distMeal = minDistTo(usage.meals, c.id, dayIdx);
+    const distCat = minDistTo(usage.categories, c.category, dayIdx);
+    // Encode "never used" as a large number so it sorts to the top
+    const sinceMeal = distMeal === Infinity ? 999 : distMeal;
+    const sinceCat = distCat === Infinity ? 999 : distCat;
+    return { c, sinceMeal, sinceCat };
+  });
+  scored.sort((a, b) => {
+    if (a.sinceCat !== b.sinceCat) return b.sinceCat - a.sinceCat;
+    return b.sinceMeal - a.sinceMeal;
+  });
+
+  const dateStr = `${DOW_LABELS[date.getDay()]} ${formatShortDate(date)}`;
+  let html = `
+    <div class="modal">
+      <h2>Swap ${SLOT_LABELS[slot]} — ${dateStr}</h2>
+      <div class="modal-subtitle">Pick a replacement. Suggestions at top are best for variety.</div>
+  `;
+
+  // Special action buttons
+  if (cell && (cell.kind === "fixed-meal" || cell.kind === "fixed-text")) {
+    html += `<div style="background:#ede9fe;padding:8px 10px;border-radius:6px;font-size:12px;color:#5b21b6;margin-bottom:10px;">
+      This is a fixed slot (📌) per your weekly rule. Swapping here changes only this date — your weekly rule stays the same. To change the rule itself, see Settings → Weekly Rules.
+    </div>`;
+  } else if (cell && cell.kind === "grandma") {
+    html += `<div style="background:#fef3c7;padding:8px 10px;border-radius:6px;font-size:12px;color:#92400e;margin-bottom:10px;">
+      This is a "Grandma's" day per your weekly rule. Swap below to override for this date only — your weekly rule stays the same. To change the rule itself, see Settings → Weekly Rules.
+    </div>`;
+  }
+
+  // Mark as grandma's option
+  html += `<div class="swap-section-label">Special</div>`;
+  html += `<div class="swap-option" onclick="swapTo(${dayIdx},'${slot}',null,'grandma')">
+    <div>Mark as eating out / at Grandma's</div>
+    <div class="cat-tag">no plan</div>
+  </div>`;
+  if (slot === "snack" || slot === "breakfast" || slot === "lunch" || slot === "dinner") {
+    html += `<div class="swap-option" onclick="swapTo(${dayIdx},'${slot}',null,'clear')">
+      <div>Clear this slot</div>
+      <div class="cat-tag">empty</div>
+    </div>`;
+  }
+
+  html += `<div class="swap-section-label">Choose a meal</div>`;
+  for (const { c, sinceMeal, sinceCat } of scored) {
+    const isCurrent = c.id === currentMealId;
+    // sinceMeal here is the minimum distance to the nearest neighbor (past or future)
+    const hint = sinceMeal >= 999 || sinceMeal > 14
+      ? "fresh choice"
+      : sinceMeal === 0 ? "used today elsewhere"
+      : sinceMeal === 1 ? "used 1 day away"
+      : `used ${sinceMeal} days away`;
+    const catTag = c.category.replace(/-/g, " ");
+    html += `<div class="swap-option ${isCurrent ? "current" : ""}" onclick="swapTo(${dayIdx},'${slot}','${c.id}','planned')">
+      <div>
+        <div style="font-size:13px;">${escapeHtml(c.name)}${isCurrent ? " <span style='color:#059669;font-size:11px;'>(current)</span>" : ""}</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${hint}</div>
+      </div>
+      <div class="cat-tag">${escapeHtml(catTag)}</div>
+    </div>`;
+  }
+
+  html += `
+    <div class="modal-footer">
+      <button onclick="closeModal()">Cancel</button>
+    </div>
+    </div>
+  `;
+  openModal(html);
+}
+
+function computeUsageAroundDay(targetIdx) {
+  // Returns Set-based usage that contains every recorded use in history + plan EXCEPT the target cell.
+  const usage = { meals: {}, categories: {}, bfItems: {} };
+  const planStart = fromISO(state.plan.startDate);
+  for (const h of (state.history || [])) {
+    const histDate = fromISO(h.date);
+    const diff = Math.floor((histDate - planStart) / 86400000);
+    if (Math.abs(diff - targetIdx) <= 14) {
+      if (h.mealId) addUse(usage.meals, h.mealId, diff);
+      if (h.category) addUse(usage.categories, h.category, diff);
+      if (h.bfItems) for (const it of h.bfItems) addUse(usage.bfItems, it, diff);
+    }
+  }
+  for (let i = 0; i < state.plan.days.length; i++) {
+    if (i === targetIdx) continue;
+    const day = state.plan.days[i];
+    for (const slot of GEN_SLOT_ORDER) {
+      const v = day[slot];
+      if (!v || !v.mealId) continue;
+      const m = findMeal(v.mealId);
+      if (!m) continue;
+      addUse(usage.meals, m.id, i);
+      addUse(usage.categories, m.category, i);
+      if (slot === "breakfast" && m.items) {
+        for (const it of m.items) addUse(usage.bfItems, it, i);
+      }
+    }
+  }
+  return usage;
+}
+
+window.swapTo = function(dayIdx, slot, mealId, kind) {
+  const day = state.plan.days[dayIdx];
+  // Every swap auto-locks the cell so Regenerate preserves it.
+  if (kind === "grandma") {
+    day[slot] = { kind: "grandma", label: "At Grandma's", locked: true };
+  } else if (kind === "clear") {
+    day[slot] = { kind: "cleared", locked: true };
+  } else {
+    const m = findMeal(mealId);
+    if (m) {
+      // Preserve fixed-meal kind so user sees it was a fixed slot if it was
+      const existing = day[slot];
+      const kindToUse = existing && existing.kind === "fixed-meal" ? "fixed-meal" : "planned";
+      day[slot] = { kind: kindToUse, mealId: m.id, name: m.name, locked: true };
+    }
+  }
+  saveState();
+  closeModal();
+  render();
+  showToast("Swapped & locked. Hit Regenerate to refresh the rest of the plan around this.");
+};
+
+window.toggleLock = function(dayIdx, slot, event) {
+  if (event) event.stopPropagation();
+  const day = state.plan.days[dayIdx];
+  if (!day || !day[slot]) return;
+  day[slot].locked = !day[slot].locked;
+  saveState();
+  render();
+};
+
+// ====================================================================
+// MODAL INFRA
+// ====================================================================
+
+function openModal(innerHtml) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this)closeModal()">${innerHtml}</div>`;
+}
+function closeModal() {
+  document.getElementById("modalRoot").innerHTML = "";
+}
+
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => el.classList.remove("show"), 2400);
+}
+
+// ====================================================================
+// REGENERATE
+// ====================================================================
+
+function regenerateFromToday() {
+  doRegenerate({ respectLocks: true });
+}
+
+function regenerateFresh() {
+  if (!confirm("Regenerate everything fresh? This will clear all your meal locks (your custom pool, rules, and history are kept). The algorithm will re-pick all future cells.")) return;
+  // Clear locks on all future cells first
+  const today = todayISO();
+  for (const d of state.plan.days) {
+    if (d.date < today) continue;
+    for (const slot of GEN_SLOT_ORDER) {
+      if (d[slot] && d[slot].locked) d[slot].locked = false;
+    }
+  }
+  doRegenerate({ respectLocks: false });
+  showToast("Fresh plan generated. All locks cleared.");
+}
+
+function doRegenerate({ respectLocks }) {
+  const today = todayISO();
+  // Build cellAnchors: past cells always anchored; future cells anchored only if locked (and respectLocks)
+  const cellAnchors = new Map();
+  for (const d of state.plan.days) {
+    for (const slot of GEN_SLOT_ORDER) {
+      const cell = d[slot];
+      if (!cell) continue;
+      if (d.date < today) {
+        cellAnchors.set(`${d.date}|${slot}`, cell);
+      } else if (respectLocks && cell.locked) {
+        cellAnchors.set(`${d.date}|${slot}`, cell);
+      }
+    }
+  }
+  // Push completed days to history
+  for (const d of state.plan.days) {
+    if (d.date >= today) continue;
+    for (const slot of GEN_SLOT_ORDER) {
+      const v = d[slot];
+      if (!v || !v.mealId) continue;
+      const m = findMeal(v.mealId);
+      if (!m) continue;
+      if (!state.history.some(h => h.date === d.date && h.slot === slot)) {
+        const entry = { date: d.date, slot, mealId: m.id, category: m.category };
+        if (slot === "breakfast" && m.items) entry.bfItems = [...m.items];
+        state.history.push(entry);
+      }
+    }
+  }
+  // Trim history to last 21 days from today
+  const cutoff = toISO(addDays(new Date(), -21));
+  state.history = state.history.filter(h => h.date >= cutoff);
+
+  // Determine new start date: if plan already covers today, keep startDate. Else move to today.
+  let newStartISO = state.plan.startDate;
+  if (today > state.plan.days[state.plan.days.length - 1].date) {
+    newStartISO = today;
+    state.startDateISO = newStartISO;
+  }
+
+  state.plan = generatePlan(newStartISO, cellAnchors);
+  saveState();
+  render();
+  if (respectLocks) showToast("Plan regenerated. Locked cells preserved.");
+}
+
+// ====================================================================
+// SETTINGS
+// ====================================================================
+
+function openSettings() {
+  const slotOpts = ["breakfast", "lunch", "dinner", "snack"];
+  const ldMealOpts = state.pool.lunchDinner.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("");
+  const html = `
+    <div class="modal" style="max-width:640px;">
+      <h2>Settings</h2>
+      <div class="modal-subtitle">Adjust how plans are generated.</div>
+
+      <div class="field-row">
+        <label for="setStartDate">Start date:</label>
+        <input type="date" id="setStartDate" value="${state.plan ? state.plan.startDate : state.startDateISO}">
+      </div>
+
+      <details open>
+        <summary>Weekly rules (${state.fixedRules.length})</summary>
+        <div style="font-size:12px;color:#9ca3af;margin:6px 0 10px 0;">
+          Each rule applies every week on the chosen day-of-week. "At Grandma's" means skip planning (still swappable per-date). "Fixed meal" pins a specific dish. "Fixed text" lets you write free-form (e.g. Hashbrown).
+        </div>
+        <div id="rulesList"></div>
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed #e8e3da;">
+          <div style="font-size:12px;font-weight:600;color:#1f2937;margin-bottom:6px;">Add a new rule</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;align-items:end;">
+            <div>
+              <div style="font-size:11px;color:#9ca3af;margin-bottom:2px;">Day</div>
+              <select id="newRuleDow" style="width:100%;padding:6px 8px;border:1px solid #e8e3da;border-radius:4px;font:inherit;font-size:13px;">
+                ${DOW_LABELS.map((d, i) => `<option value="${i}">${d}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <div style="font-size:11px;color:#9ca3af;margin-bottom:2px;">Slot</div>
+              <select id="newRuleSlot" style="width:100%;padding:6px 8px;border:1px solid #e8e3da;border-radius:4px;font:inherit;font-size:13px;">
+                ${slotOpts.map(s => `<option value="${s}">${SLOT_LABELS[s]}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <div style="font-size:11px;color:#9ca3af;margin-bottom:2px;">Type</div>
+              <select id="newRuleType" onchange="updateNewRuleTypeFields()" style="width:100%;padding:6px 8px;border:1px solid #e8e3da;border-radius:4px;font:inherit;font-size:13px;">
+                <option value="grandma">At Grandma's</option>
+                <option value="fixed-meal">Fixed meal</option>
+                <option value="fixed-text">Fixed text</option>
+              </select>
+            </div>
+          </div>
+          <div id="newRuleExtraFields" style="margin-top:6px;"></div>
+          <div style="margin-top:8px;">
+            <button class="primary small" onclick="addRule()">Add rule</button>
+            <span style="font-size:11px;color:#9ca3af;margin-left:8px;">Changes apply when you Regenerate.</span>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Reset all data</summary>
+        <div style="margin-top:8px;">
+          <button class="danger" onclick="resetAll()">Reset to defaults</button>
+          <div style="font-size:12px;color:#9ca3af;margin-top:6px;">Clears your customized pool, rules, and history. Cannot be undone.</div>
+        </div>
+      </details>
+
+      <div class="modal-footer">
+        <button onclick="closeModal()">Cancel</button>
+        <button class="primary" onclick="saveSettings()">Save & Regenerate</button>
+      </div>
+    </div>
+  `;
+  openModal(html);
+  renderRulesList();
+  updateNewRuleTypeFields();
+}
+
+function renderRulesList() {
+  const el = document.getElementById("rulesList");
+  if (!el) return;
+  if (state.fixedRules.length === 0) {
+    el.innerHTML = `<div style="font-size:12px;color:#9ca3af;font-style:italic;padding:8px 0;">No weekly rules. The generator will fill every slot from the pool.</div>`;
+    return;
+  }
+  // Sort by day then slot for readable list
+  const slotIdx = { breakfast: 0, lunch: 1, dinner: 2, snack: 3 };
+  const sorted = state.fixedRules
+    .map((r, originalIdx) => ({ r, originalIdx }))
+    .sort((a, b) => a.r.dayOfWeek - b.r.dayOfWeek || (slotIdx[a.r.slot]||0) - (slotIdx[b.r.slot]||0));
+  el.innerHTML = sorted.map(({ r, originalIdx }) => {
+    const summary = r.type === "grandma"
+      ? `<span style="color:#92400e;">🏠 At Grandma's</span>`
+      : r.type === "fixed-meal"
+        ? `<span style="color:#5b21b6;">📌 ${escapeHtml(findMeal(r.mealId)?.name || "(missing meal)")}</span>`
+        : `<span style="color:#5b21b6;">📌 ${escapeHtml(r.label || "")}</span>`;
+    return `
+      <div style="padding:8px 10px;background:#fafafa;border:1px solid #f0ebe1;border-radius:6px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <div style="font-size:13px;">
+          <strong>${DOW_LABELS[r.dayOfWeek]}</strong>
+          <span style="color:#6b7280;"> ${SLOT_LABELS[r.slot] || r.slot}</span>
+          <span style="margin-left:6px;">${summary}</span>
+        </div>
+        <button class="small danger" onclick="removeRule(${originalIdx})">Remove</button>
+      </div>
+    `;
+  }).join("");
+}
+
+window.updateNewRuleTypeFields = function() {
+  const typeEl = document.getElementById("newRuleType");
+  const extra = document.getElementById("newRuleExtraFields");
+  if (!typeEl || !extra) return;
+  const type = typeEl.value;
+  if (type === "fixed-meal") {
+    const opts = state.pool.lunchDinner.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("");
+    extra.innerHTML = `
+      <div style="font-size:11px;color:#9ca3af;margin-bottom:2px;">Meal</div>
+      <select id="newRuleMeal" style="width:100%;padding:6px 8px;border:1px solid #e8e3da;border-radius:4px;font:inherit;font-size:13px;">${opts}</select>
+      <div style="font-size:11px;color:#9ca3af;margin-top:4px;">Note: meals are picked from the lunch/dinner pool. To pin a breakfast or snack, use "Fixed text" instead.</div>
+    `;
+  } else if (type === "fixed-text") {
+    extra.innerHTML = `
+      <div style="font-size:11px;color:#9ca3af;margin-bottom:2px;">Label</div>
+      <input id="newRuleLabel" placeholder="e.g. Hashbrown" style="width:100%;padding:6px 8px;border:1px solid #e8e3da;border-radius:4px;font:inherit;font-size:13px;">
+    `;
+  } else {
+    extra.innerHTML = "";
+  }
+};
+
+window.addRule = function() {
+  const dow = parseInt(document.getElementById("newRuleDow").value, 10);
+  const slot = document.getElementById("newRuleSlot").value;
+  const type = document.getElementById("newRuleType").value;
+  // Check for duplicate (same day + slot)
+  const existingIdx = state.fixedRules.findIndex(r => r.dayOfWeek === dow && r.slot === slot);
+  if (existingIdx !== -1) {
+    if (!confirm(`A rule already exists for ${DOW_LABELS[dow]} ${slot}. Replace it?`)) return;
+    state.fixedRules.splice(existingIdx, 1);
+  }
+  const rule = { dayOfWeek: dow, slot, type };
+  if (type === "grandma") {
+    rule.label = "At Grandma's";
+  } else if (type === "fixed-meal") {
+    const mealEl = document.getElementById("newRuleMeal");
+    if (!mealEl || !mealEl.value) return showToast("Pick a meal.");
+    rule.mealId = mealEl.value;
+  } else if (type === "fixed-text") {
+    const labelEl = document.getElementById("newRuleLabel");
+    const label = labelEl ? labelEl.value.trim() : "";
+    if (!label) return showToast("Enter a label.");
+    rule.label = label;
+  }
+  state.fixedRules.push(rule);
+  saveState();
+  renderRulesList();
+  // Reset inputs to defaults for quick re-add
+  const labelEl = document.getElementById("newRuleLabel");
+  if (labelEl) labelEl.value = "";
+  showToast("Rule added. Save & Regenerate to apply.");
+};
+
+window.saveSettings = function() {
+  const newStart = document.getElementById("setStartDate").value;
+  if (newStart && newStart !== state.plan.startDate) {
+    state.startDateISO = newStart;
+    state.plan = generatePlan(newStart);
+    saveState();
+    closeModal();
+    render();
+    showToast("New plan generated from " + newStart);
+    return;
+  }
+  // Otherwise regenerate forward from today to apply any rule changes
+  closeModal();
+  regenerateFromToday();
+};
+
+window.removeRule = function(idx) {
+  state.fixedRules.splice(idx, 1);
+  saveState();
+  renderRulesList();
+  showToast("Rule removed. Save & Regenerate to apply.");
+};
+
+window.resetAll = function() {
+  if (!confirm("Reset all data to defaults? This clears any custom meals or edits.")) return;
+  localStorage.removeItem(STORAGE_KEY);
+  state = loadState();
+  state.plan = generatePlan(state.startDateISO);
+  saveState();
+  closeModal();
+  render();
+  showToast("Reset to defaults.");
+};
+
+// ====================================================================
+// POOL EDITOR
+// ====================================================================
+
+function openPoolEditor() {
+  const categoriesLD = ["chicken-rice","fried-rice","japanese-rice","chinese-rice","pasta","ramen","noodle","beehoon"];
+  const categoriesSnack = ["fruit","nuts","cereal","biscuit","other"];
+
+  let html = `
+    <div class="modal" style="max-width:720px;">
+      <h2>Edit Meal Pool</h2>
+      <div class="modal-subtitle">Add, rename, recategorize, or remove meals. Click Regenerate after saving to apply.</div>
+
+      <div class="pool-section">
+      <div class="pool-section">
+        <h3>Lunch & Dinner (${state.pool.lunchDinner.length})</h3>
+        <div id="lunchDinnerList"></div>
+        <div class="add-row">
+          <input id="newLDName" placeholder="New lunch/dinner meal name">
+          <select id="newLDCat">${categoriesLD.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
+          <button onclick="addLunchDinner()">Add</button>
+        </div>
+      </div>
+
+      <div class="pool-section">
+        <h3>Snacks (${state.pool.snacks.length})</h3>
+        <div id="snackList"></div>
+        <div class="add-row">
+          <input id="newSnackName" placeholder="New snack name">
+          <select id="newSnackCat">${categoriesSnack.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
+          <button onclick="addSnack()">Add</button>
+        </div>
+      </div>
+
+      <div class="pool-section">
+        <h3>Breakfasts (${state.pool.breakfasts.length})</h3>
+        <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">
+          Breakfasts are auto-generated from solo items + 2-item combos. Editing breakfasts directly will be added later.
+        </div>
+        <details>
+          <summary>Show current breakfast options</summary>
+          <div style="font-size:12px;color:#6b7280;margin-top:6px;line-height:1.6;">
+            ${state.pool.breakfasts.map(b => `&bull; ${escapeHtml(b.name)}`).join("<br>")}
+          </div>
+        </details>
+      </div>
+
+      <div class="modal-footer">
+        <button onclick="closeModal()">Close</button>
+        <button class="primary" onclick="closeModal();regenerateFromToday();">Save & Regenerate</button>
+      </div>
+    </div>
+  `;
+  openModal(html);
+  renderLunchDinnerList();
+  renderSnackList();
+}
+
+function renderLunchDinnerList() {
+  const list = document.getElementById("lunchDinnerList");
+  if (!list) return;
+  const categoriesLD = ["chicken-rice","fried-rice","japanese-rice","chinese-rice","pasta","ramen","noodle","beehoon"];
+  list.innerHTML = state.pool.lunchDinner.map((m, idx) => `
+    <div class="pool-item">
+      <input class="name-input" value="${escapeHtml(m.name)}" oninput="updateLD(${idx},'name',this.value)">
+      <select onchange="updateLD(${idx},'category',this.value)">
+        ${categoriesLD.map(c=>`<option value="${c}" ${c===m.category?"selected":""}>${c}</option>`).join("")}
+      </select>
+      <label class="checkbox-label">
+        <input type="checkbox" ${m.lunchOnly?"checked":""} onchange="updateLD(${idx},'lunchOnly',this.checked)"> lunch only
+      </label>
+      <button class="small danger" onclick="removeLD(${idx})">&times;</button>
+    </div>
+  `).join("");
+}
+
+function renderSnackList() {
+  const list = document.getElementById("snackList");
+  if (!list) return;
+  const categoriesSnack = ["fruit","nuts","cereal","biscuit","other"];
+  list.innerHTML = state.pool.snacks.map((m, idx) => `
+    <div class="pool-item">
+      <input class="name-input" value="${escapeHtml(m.name)}" oninput="updateSnack(${idx},'name',this.value)">
+      <select onchange="updateSnack(${idx},'category',this.value)">
+        ${categoriesSnack.map(c=>`<option value="${c}" ${c===m.category?"selected":""}>${c}</option>`).join("")}
+      </select>
+      <button class="small danger" onclick="removeSnack(${idx})">&times;</button>
+    </div>
+  `).join("");
+}
+
+window.updateLD = function(idx, field, val) {
+  state.pool.lunchDinner[idx][field] = val;
+  saveState();
+};
+window.updateSnack = function(idx, field, val) {
+  state.pool.snacks[idx][field] = val;
+  saveState();
+};
+window.removeLD = function(idx) {
+  if (!confirm("Remove " + state.pool.lunchDinner[idx].name + "?")) return;
+  state.pool.lunchDinner.splice(idx, 1);
+  saveState();
+  openPoolEditor();
+};
+window.removeSnack = function(idx) {
+  if (!confirm("Remove " + state.pool.snacks[idx].name + "?")) return;
+  state.pool.snacks.splice(idx, 1);
+  saveState();
+  openPoolEditor();
+};
+window.addLunchDinner = function() {
+  const name = document.getElementById("newLDName").value.trim();
+  const cat = document.getElementById("newLDCat").value;
+  if (!name) return showToast("Enter a name.");
+  const id = "ld_custom_" + Date.now();
+  state.pool.lunchDinner.push({ id, name, category: cat });
+  saveState();
+  openPoolEditor();
+};
+window.addSnack = function() {
+  const name = document.getElementById("newSnackName").value.trim();
+  const cat = document.getElementById("newSnackCat").value;
+  if (!name) return showToast("Enter a name.");
+  const id = "sn_custom_" + Date.now();
+  state.pool.snacks.push({ id, name, category: cat });
+  saveState();
+  openPoolEditor();
+};
+
+// ====================================================================
+// INIT
+// ====================================================================
+
+window.openSettings = openSettings;
+window.openPoolEditor = openPoolEditor;
+window.regenerateFromToday = regenerateFromToday;
+window.regenerateFresh = regenerateFresh;
+window.closeModal = closeModal;
+
+window.toggleRegenMenu = function(event) {
+  if (event) event.stopPropagation();
+  const menu = document.getElementById("regenMenu");
+  if (menu) menu.classList.toggle("show");
+};
+window.closeRegenMenu = function() {
+  const menu = document.getElementById("regenMenu");
+  if (menu) menu.classList.remove("show");
+};
+document.addEventListener("click", function(e) {
+  const menu = document.getElementById("regenMenu");
+  if (!menu || !menu.classList.contains("show")) return;
+  const splitBtn = menu.closest(".split-button");
+  if (splitBtn && splitBtn.contains(e.target)) return;
+  menu.classList.remove("show");
+});
+
+render();
+</script>
+</body>
+</html>
