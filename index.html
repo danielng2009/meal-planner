@@ -456,12 +456,51 @@ const DEFAULT_SNACKS = [
 
 // Fixed weekly rules. dayOfWeek: 0=Sun, 1=Mon, ..., 6=Sat
 const DEFAULT_FIXED_RULES = [
-  { dayOfWeek: 0, slot: "lunch",  type: "grandma", label: "At Grandma's" },
-  { dayOfWeek: 3, slot: "dinner", type: "grandma", label: "At Grandma's" },
-  { dayOfWeek: 5, slot: "dinner", type: "grandma", label: "At Grandma's" },
+  { dayOfWeek: 0, slot: "lunch",  type: "grandma",    label: "At Grandma's" },
+  { dayOfWeek: 3, slot: "lunch",  type: "fixed-meal", mealId: "ld_aglio" },     // Wed lunch
+  { dayOfWeek: 3, slot: "dinner", type: "grandma",    label: "At Grandma's" },
+  { dayOfWeek: 5, slot: "lunch",  type: "fixed-meal", mealId: "ld_mac" },       // Fri lunch
+  { dayOfWeek: 5, slot: "dinner", type: "grandma",    label: "At Grandma's" },
+  { dayOfWeek: 6, slot: "lunch",  type: "fixed-meal", mealId: "ld_fishball" },  // Sat lunch
   { dayOfWeek: 6, slot: "dinner", type: "fixed-meal", mealId: "ld_dtf" },
   { dayOfWeek: 6, slot: "snack",  type: "fixed-text", label: "Hashbrown" }
 ];
+
+// Eligible meal IDs per (dayOfWeek, slot). If a key exists, the auto-picker MUST
+// restrict candidates to this list. Slots without entries here use the full pool.
+// (Manual swaps via the modal can still pick non-eligible meals — see openSwapModal.)
+const ELIGIBLE_LISTS = (() => {
+  const lunchEligible = [
+    "ld_chickenrice", "ld_friedbeehoon", "ld_teriyakisalm", "ld_eggtofu",
+    "ld_sweetpork", "ld_steampork", "ld_tomatopasta", "ld_creampasta",
+    "ld_chickenbroc", "ld_friednoodles", "ld_teriyakifr", "ld_oysterfr",
+    "ld_panfried", "ld_toriq"
+  ];
+  // Dinner = lunch list minus Chicken Rice and Tori Q
+  const dinnerEligible = [
+    "ld_friedbeehoon", "ld_teriyakisalm", "ld_eggtofu",
+    "ld_sweetpork", "ld_steampork", "ld_tomatopasta", "ld_creampasta",
+    "ld_chickenbroc", "ld_friednoodles", "ld_teriyakifr", "ld_oysterfr",
+    "ld_panfried"
+  ];
+  return {
+    // Mon, Tue, Thu lunch
+    "1|lunch": lunchEligible,
+    "2|lunch": lunchEligible,
+    "4|lunch": lunchEligible,
+    // Mon, Tue, Thu, Sun dinner
+    "1|dinner": dinnerEligible,
+    "2|dinner": dinnerEligible,
+    "4|dinner": dinnerEligible,
+    "0|dinner": dinnerEligible
+  };
+})();
+
+function getEligibleListFor(date, slot) {
+  if (!date) return null;
+  const key = date.getDay() + "|" + slot;
+  return ELIGIBLE_LISTS[key] || null;
+}
 
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // Generator processes slots in this order so usage of lunch is applied before dinner (same-day spacing)
@@ -660,9 +699,23 @@ function defaultState() {
 function mergeWithDefaults(parsed) {
   const base = defaultState();
   if (!parsed || typeof parsed !== "object") return base;
-  return Object.assign({}, base, parsed, {
+  const merged = Object.assign({}, base, parsed, {
     pool: Object.assign({}, base.pool, parsed.pool || {}),
   });
+  // Migration (v3.1): backfill the new fixed lunch rules for existing users.
+  // Only add if no rule already exists for that day/slot, so we don't clobber customizations.
+  if (Array.isArray(merged.fixedRules)) {
+    const v31NewRules = [
+      { dayOfWeek: 3, slot: "lunch", type: "fixed-meal", mealId: "ld_aglio" },     // Wed lunch
+      { dayOfWeek: 5, slot: "lunch", type: "fixed-meal", mealId: "ld_mac" },       // Fri lunch
+      { dayOfWeek: 6, slot: "lunch", type: "fixed-meal", mealId: "ld_fishball" }   // Sat lunch
+    ];
+    for (const r of v31NewRules) {
+      const exists = merged.fixedRules.some(x => x.dayOfWeek === r.dayOfWeek && x.slot === r.slot);
+      if (!exists) merged.fixedRules.push(r);
+    }
+  }
+  return merged;
 }
 
 function loadLocalState() {
@@ -850,8 +903,8 @@ function generatePlan(startISO, cellAnchors = null) {
         continue;
       }
 
-      // c. Pick from pool
-      const candidates = candidatePoolFor(slot);
+      // c. Pick from pool (date passed so eligible-list restriction applies)
+      const candidates = candidatePoolFor(slot, date);
       if (candidates.length === 0) {
         day[slot] = null;
         continue;
@@ -873,14 +926,20 @@ function generatePlan(startISO, cellAnchors = null) {
   return { startDate: startISO, days };
 }
 
-function candidatePoolFor(slot) {
+function candidatePoolFor(slot, date) {
   if (slot === "breakfast") return state.pool.breakfasts;
   if (slot === "snack")     return state.pool.snacks;
   // lunch/dinner share pool
-  const all = state.pool.lunchDinner;
-  if (slot === "lunch")  return all;
-  // dinner: exclude lunch-only
-  return all.filter(m => !m.lunchOnly);
+  let pool = state.pool.lunchDinner;
+  if (slot === "dinner") pool = pool.filter(m => !m.lunchOnly);
+  // Apply eligible-list restriction if one exists for this (day-of-week, slot)
+  const eligible = getEligibleListFor(date, slot);
+  if (eligible) {
+    const filtered = pool.filter(m => eligible.includes(m.id));
+    // Safety: if filtering produces empty (e.g. user deleted all eligible meals), fall back to the unfiltered pool
+    return filtered.length > 0 ? filtered : pool;
+  }
+  return pool;
 }
 
 // Usage helpers — usage maps are { key -> Set<dayIdx> }
@@ -1068,8 +1127,13 @@ function openSwapModal(dayIdx, slot) {
   const day = state.plan.days[dayIdx];
   const cell = day[slot];
   const date = fromISO(day.date);
-  const candidates = candidatePoolFor(slot);
+  // Show ALL meals in the swap modal (eligible + non-eligible), grouped below.
+  // Pass null for date so eligibility filter doesn't apply here.
+  const candidates = candidatePoolFor(slot, null);
   const currentMealId = cell && cell.mealId ? cell.mealId : null;
+  // Determine which IDs are eligible for THIS specific date/slot (if any)
+  const eligibleList = getEligibleListFor(date, slot);
+  const eligibleSet = eligibleList ? new Set(eligibleList) : null;
 
   // Compute spacing context for hints
   const usage = computeUsageAroundDay(dayIdx);
@@ -1078,15 +1142,18 @@ function openSwapModal(dayIdx, slot) {
   const scored = candidates.map(c => {
     const distMeal = minDistTo(usage.meals, c.id, dayIdx);
     const distCat = minDistTo(usage.categories, c.category, dayIdx);
-    // Encode "never used" as a large number so it sorts to the top
     const sinceMeal = distMeal === Infinity ? 999 : distMeal;
     const sinceCat = distCat === Infinity ? 999 : distCat;
-    return { c, sinceMeal, sinceCat };
+    const isEligible = eligibleSet ? eligibleSet.has(c.id) : true;
+    return { c, sinceMeal, sinceCat, isEligible };
   });
   scored.sort((a, b) => {
     if (a.sinceCat !== b.sinceCat) return b.sinceCat - a.sinceCat;
     return b.sinceMeal - a.sinceMeal;
   });
+  // Split into eligible and non-eligible groups (preserves sort order within each)
+  const eligibleGroup = eligibleSet ? scored.filter(s => s.isEligible) : scored;
+  const otherGroup    = eligibleSet ? scored.filter(s => !s.isEligible) : [];
 
   const dateStr = `${DOW_LABELS[date.getDay()]} ${formatShortDate(date)}`;
   let html = `
@@ -1119,23 +1186,37 @@ function openSwapModal(dayIdx, slot) {
     </div>`;
   }
 
-  html += `<div class="swap-section-label">Choose a meal</div>`;
-  for (const { c, sinceMeal, sinceCat } of scored) {
+  function renderCandidate({ c, sinceMeal }) {
     const isCurrent = c.id === currentMealId;
-    // sinceMeal here is the minimum distance to the nearest neighbor (past or future)
     const hint = sinceMeal >= 999 || sinceMeal > 14
       ? "fresh choice"
       : sinceMeal === 0 ? "used today elsewhere"
       : sinceMeal === 1 ? "used 1 day away"
       : `used ${sinceMeal} days away`;
     const catTag = c.category.replace(/-/g, " ");
-    html += `<div class="swap-option ${isCurrent ? "current" : ""}" onclick="swapTo(${dayIdx},'${slot}','${c.id}','planned')">
+    return `<div class="swap-option ${isCurrent ? "current" : ""}" onclick="swapTo(${dayIdx},'${slot}','${c.id}','planned')">
       <div>
         <div style="font-size:13px;">${escapeHtml(c.name)}${isCurrent ? " <span style='color:#059669;font-size:11px;'>(current)</span>" : ""}</div>
         <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${hint}</div>
       </div>
       <div class="cat-tag">${escapeHtml(catTag)}</div>
     </div>`;
+  }
+
+  if (eligibleSet) {
+    html += `<div class="swap-section-label">Eligible for this day</div>`;
+    if (eligibleGroup.length === 0) {
+      html += `<div style="font-size:12px;color:#9ca3af;font-style:italic;padding:6px 0;">No eligible meals in your pool. Pick from the override section below, or add a meal in Edit Pool.</div>`;
+    } else {
+      for (const s of eligibleGroup) html += renderCandidate(s);
+    }
+    if (otherGroup.length > 0) {
+      html += `<div class="swap-section-label" style="margin-top:14px;">Other meals (override — not in eligible list)</div>`;
+      for (const s of otherGroup) html += renderCandidate(s);
+    }
+  } else {
+    html += `<div class="swap-section-label">Choose a meal</div>`;
+    for (const s of scored) html += renderCandidate(s);
   }
 
   html += `
