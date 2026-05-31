@@ -598,6 +598,9 @@ async function handleAuthChange(user) {
           state = mergeWithDefaults(s.data());
           if (!CLOUD.initialLoadDone) {
             CLOUD.initialLoadDone = true;
+            // Auto-roll the window on first load if the plan's start date is in the past.
+            // saveState() persists the rolled state back to Firestore (debounced).
+            if (maybeAutoRoll()) saveState();
             showMainApp();
           }
           render();
@@ -1311,6 +1314,65 @@ function showToast(msg) {
 }
 
 // ====================================================================
+// AUTO-ROLL — slide the plan window forward to start at today
+// ====================================================================
+
+// Called on app load. If plan.startDate is in the past, slide the window forward
+// so the first day is today. Preserves cells that overlap, generates only new tail
+// days, and pushes elapsed days into history.
+// Returns true if any change was made.
+function maybeAutoRoll() {
+  if (!state.plan || !state.plan.startDate || !Array.isArray(state.plan.days) || state.plan.days.length === 0) return false;
+  const today = todayISO();
+  if (state.plan.startDate >= today) return false;
+
+  const start = fromISO(state.plan.startDate);
+  const todayDate = fromISO(today);
+  const daysToRoll = Math.floor((todayDate - start) / 86400000);
+  if (daysToRoll <= 0) return false;
+
+  // 1) Push elapsed days into history (deduped by date+slot)
+  if (!Array.isArray(state.history)) state.history = [];
+  const lastElapsedIdx = Math.min(daysToRoll, state.plan.days.length);
+  for (let i = 0; i < lastElapsedIdx; i++) {
+    const d = state.plan.days[i];
+    for (const slot of GEN_SLOT_ORDER) {
+      const v = d[slot];
+      if (!v || !v.mealId) continue;
+      const m = findMeal(v.mealId);
+      if (!m) continue;
+      if (!state.history.some(h => h.date === d.date && h.slot === slot)) {
+        const entry = { date: d.date, slot, mealId: m.id, category: m.category };
+        if (slot === "breakfast" && m.items) entry.bfItems = [...m.items];
+        state.history.push(entry);
+      }
+    }
+  }
+  // Trim history to last 21 days
+  const cutoff = toISO(addDays(new Date(), -21));
+  state.history = state.history.filter(h => h.date >= cutoff);
+
+  // 2) Build anchors from cells that still overlap the new window
+  // New window: today .. today+13. Old plan covers startDate .. startDate+(plan.days.length-1).
+  // Overlap range in old plan indices: daysToRoll .. plan.days.length-1
+  const cellAnchors = new Map();
+  for (let i = daysToRoll; i < state.plan.days.length; i++) {
+    const d = state.plan.days[i];
+    for (const slot of GEN_SLOT_ORDER) {
+      const cell = d[slot];
+      if (!cell) continue;
+      cellAnchors.set(`${d.date}|${slot}`, cell);
+    }
+  }
+
+  // 3) Regenerate. With all overlapping cells anchored, the algorithm only fills the
+  // new tail days at the end of the window. Fixed-rule cells re-apply naturally.
+  state.startDateISO = today;
+  state.plan = generatePlan(today, cellAnchors);
+  return true;
+}
+
+// ====================================================================
 // REGENERATE
 // ====================================================================
 
@@ -1746,9 +1808,13 @@ document.addEventListener("click", function(e) {
 (function initApp() {
   const cloudOk = initCloud();
   if (cloudOk) {
+    // Cloud mode: handleAuthChange will show sign-in or load data.
+    // Auto-roll happens in the snapshot listener on first load.
     showLoadingUI();
   } else {
+    // Local-only mode (Cowork artifact or unconfigured)
     state = loadState();
+    if (maybeAutoRoll()) saveState();
     showMainApp();
     render();
   }
