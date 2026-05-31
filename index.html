@@ -11,6 +11,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Meal Plan">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<!-- Firebase SDK (used when hosted online; gracefully no-ops in offline/Cowork mode) -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -279,14 +283,71 @@
   .field-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
   .field-row label { font-size: 13px; color: #6b7280; min-width: 90px; }
   .field-row input[type="date"] { padding: 6px 8px; border: 1px solid #e8e3da; border-radius: 4px; font: inherit; font-size: 13px; }
+
+  /* Sign-in & loading overlays */
+  #signInOverlay, #loadingOverlay {
+    position: fixed; inset: 0; background: #faf8f5;
+    display: none; align-items: center; justify-content: center;
+    z-index: 1000; padding: 20px;
+  }
+  .auth-card {
+    background: #ffffff; border-radius: 14px; padding: 32px 28px;
+    max-width: 400px; width: 100%; text-align: center;
+    border: 1px solid #e8e3da;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  }
+  .auth-icon { font-size: 44px; line-height: 1; margin-bottom: 10px; }
+  .auth-card h1 { margin: 8px 0 8px; font-size: 22px; font-weight: 600; color: #1f2937; }
+  .auth-card p { color: #6b7280; font-size: 14px; line-height: 1.5; margin: 0 0 18px; }
+  .auth-card button.primary { width: 100%; padding: 12px 16px; font-size: 14px; font-weight: 500; }
+  .auth-error { color: #b91c1c; font-size: 12px; min-height: 1em; margin-top: 14px !important; margin-bottom: 0 !important; }
+  .auth-hint { font-size: 12px !important; color: #9ca3af !important; margin-top: 14px !important; margin-bottom: 0 !important; }
+
+  /* Sync status badge in header */
+  .sync-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 500;
+    background: #f0f9f3; color: #2d6a4f; border: 1px solid #c8e6d4;
+  }
+  .sync-badge .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #2d6a4f;
+  }
+  .sync-badge.offline { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+  .sync-badge.offline .dot { background: #f59e0b; }
+  .sync-badge.error { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+  .sync-badge.error .dot { background: #ef4444; }
 </style>
 </head>
 <body>
-<div class="container">
+
+<!-- Sign-in overlay (shown when cloud mode is enabled and user is not authenticated) -->
+<div id="signInOverlay" style="display:none;">
+  <div class="auth-card">
+    <div class="auth-icon">🍽️</div>
+    <h1>Family Meal Planner</h1>
+    <p>Sign in with the family Google account to access your shared meal plan.</p>
+    <button class="primary" onclick="signInGoogle()">Sign in with Google</button>
+    <p class="auth-error" id="signinError"></p>
+    <p class="auth-hint">Both parents sign in with the same family account so the plan stays synced across devices.</p>
+  </div>
+</div>
+
+<!-- Loading overlay (shown while waiting for first Firestore snapshot) -->
+<div id="loadingOverlay" style="display:none;">
+  <div class="auth-card">
+    <div class="auth-icon">⏳</div>
+    <p>Loading your meal plan…</p>
+  </div>
+</div>
+
+<div class="container" id="mainApp" style="display:none;">
   <header class="top">
     <div style="flex: 1 1 auto;">
       <h1>Family Meal Planner</h1>
       <div class="subtitle" id="dateRangeLabel">14-day plan</div>
+      <div id="syncBadgeContainer" style="margin-top:6px;"></div>
     </div>
     <div class="actions">
       <button onclick="openSettings()">⚙ Settings</button>
@@ -415,6 +476,165 @@ const SLOT_LABELS = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", 
 
 const STORAGE_KEY = "mealPlanner.v1";
 
+// ====================================================================
+// CLOUD SYNC (Firebase) — configured for Daniel's household
+// ====================================================================
+// Firebase web config keys are NOT secrets — they identify the project, not authenticate users.
+// Security is enforced by Firestore rules that only allow our family Google account.
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAPrkGzI0rRMWB36rNUkMZRQe4w2yXncnQ",
+  authDomain: "family-meal-planner-5274f.firebaseapp.com",
+  projectId: "family-meal-planner-5274f",
+  storageBucket: "family-meal-planner-5274f.firebasestorage.app",
+  messagingSenderId: "753830503311",
+  appId: "1:753830503311:web:0da8f951db41dc17cee1fa"
+};
+
+const CLOUD = {
+  enabled: false,        // True if Firebase SDK loaded and config valid
+  app: null,
+  auth: null,
+  db: null,
+  householdRef: null,
+  currentUser: null,
+  unsubscribe: null,
+  initialLoadDone: false,
+  applyingRemote: false  // True while applying a snapshot, to suppress re-save
+};
+
+function initCloud() {
+  if (typeof firebase === "undefined" || !firebase.initializeApp) {
+    console.log("Firebase SDK not loaded — running in local-only mode.");
+    return false;
+  }
+  if (!FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey.startsWith("FILL_IN")) {
+    console.log("Firebase config not set — running in local-only mode.");
+    return false;
+  }
+  try {
+    CLOUD.app = firebase.initializeApp(FIREBASE_CONFIG);
+    CLOUD.auth = firebase.auth();
+    CLOUD.db = firebase.firestore();
+    try { CLOUD.db.enablePersistence({ synchronizeTabs: true }); }
+    catch (e) { /* multi-tab persistence may fail; that's OK */ }
+    CLOUD.householdRef = CLOUD.db.collection("households").doc("main");
+    CLOUD.auth.onAuthStateChanged(handleAuthChange);
+    CLOUD.enabled = true;
+    return true;
+  } catch (e) {
+    console.error("Firebase init failed:", e);
+    return false;
+  }
+}
+
+async function handleAuthChange(user) {
+  CLOUD.currentUser = user;
+  if (!user) {
+    if (CLOUD.unsubscribe) { CLOUD.unsubscribe(); CLOUD.unsubscribe = null; }
+    CLOUD.initialLoadDone = false;
+    showSignInUI();
+    return;
+  }
+  showLoadingUI();
+  try {
+    const snap = await CLOUD.householdRef.get();
+    if (!snap.exists) {
+      // First sign-in ever for this household — offer to migrate local data
+      const local = loadLocalState();
+      let initial;
+      if (local && hasMeaningfulLocalData(local)
+          && confirm("Welcome! Import your existing meal plan from this device so it's shared across the family?")) {
+        initial = local;
+      } else {
+        initial = defaultState();
+      }
+      await CLOUD.householdRef.set(initial);
+    }
+    // Subscribe to real-time updates
+    CLOUD.unsubscribe = CLOUD.householdRef.onSnapshot(
+      (s) => {
+        if (!s.exists) return;
+        CLOUD.applyingRemote = true;
+        try {
+          state = mergeWithDefaults(s.data());
+          if (!CLOUD.initialLoadDone) {
+            CLOUD.initialLoadDone = true;
+            showMainApp();
+          }
+          render();
+          setSyncBadge(s.metadata.fromCache ? "offline" : "synced");
+        } finally {
+          CLOUD.applyingRemote = false;
+        }
+      },
+      (err) => {
+        console.error("Snapshot error:", err);
+        setSyncBadge("error");
+        showToast("Sync error: " + err.message);
+      }
+    );
+  } catch (e) {
+    console.error("Cloud init failed:", e);
+    setSyncBadge("error");
+    showToast("Couldn't load from cloud: " + e.message);
+  }
+}
+
+window.signInGoogle = async function() {
+  const errEl = document.getElementById("signinError");
+  if (errEl) errEl.textContent = "";
+  try {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await CLOUD.auth.signInWithPopup(provider);
+    // handleAuthChange takes over
+  } catch (e) {
+    if (errEl) errEl.textContent = e.message || "Sign-in failed.";
+    console.error("Sign-in failed:", e);
+  }
+};
+
+window.signOutCloud = async function() {
+  if (!CLOUD.auth) return;
+  try {
+    await CLOUD.auth.signOut();
+    closeModal();
+  } catch (e) {
+    showToast("Sign-out failed: " + e.message);
+  }
+};
+
+function showSignInUI() {
+  document.getElementById("signInOverlay").style.display = "flex";
+  document.getElementById("loadingOverlay").style.display = "none";
+  document.getElementById("mainApp").style.display = "none";
+}
+function showLoadingUI() {
+  document.getElementById("signInOverlay").style.display = "none";
+  document.getElementById("loadingOverlay").style.display = "flex";
+  document.getElementById("mainApp").style.display = "none";
+}
+function showMainApp() {
+  document.getElementById("signInOverlay").style.display = "none";
+  document.getElementById("loadingOverlay").style.display = "none";
+  document.getElementById("mainApp").style.display = "block";
+}
+
+function setSyncBadge(status) {
+  const c = document.getElementById("syncBadgeContainer");
+  if (!c) return;
+  if (!CLOUD.enabled) { c.innerHTML = ""; return; }
+  const label = {
+    synced:  "Synced",
+    syncing: "Syncing…",
+    offline: "Offline (will sync)",
+    error:   "Sync error"
+  }[status] || status;
+  const cls = (status === "offline") ? "sync-badge offline"
+            : (status === "error")   ? "sync-badge error"
+            :                          "sync-badge";
+  c.innerHTML = `<span class="${cls}"><span class="dot"></span>${label}</span>`;
+}
+
 function defaultState() {
   // Default start date: next Monday from today (or today if today is Monday)
   const today = new Date();
@@ -437,27 +657,75 @@ function defaultState() {
   };
 }
 
-function loadState() {
+function mergeWithDefaults(parsed) {
+  const base = defaultState();
+  if (!parsed || typeof parsed !== "object") return base;
+  return Object.assign({}, base, parsed, {
+    pool: Object.assign({}, base.pool, parsed.pool || {}),
+  });
+}
+
+function loadLocalState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    // Merge with defaults to handle schema additions later
-    const base = defaultState();
-    return Object.assign({}, base, parsed, {
-      pool: Object.assign({}, base.pool, parsed.pool || {}),
-    });
+    if (!raw) return null;
+    return mergeWithDefaults(JSON.parse(raw));
   } catch (e) {
-    console.error("Failed to load state", e);
-    return defaultState();
+    console.error("Failed to load local state", e);
+    return null;
   }
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function loadState() {
+  // For local-only mode (Cowork artifact or unconfigured), pull from localStorage.
+  return loadLocalState() || defaultState();
 }
 
-let state = loadState();
+function hasMeaningfulLocalData(s) {
+  if (!s) return false;
+  if (s.history && s.history.length > 0) return true;
+  if (s.plan && s.plan.days) {
+    for (const d of s.plan.days) {
+      for (const slot of ["breakfast", "lunch", "dinner", "snack"]) {
+        if (d[slot] && d[slot].locked) return true;
+      }
+    }
+  }
+  // Has custom meals beyond defaults?
+  if (s.pool && s.pool.lunchDinner && s.pool.lunchDinner.length !== DEFAULT_LUNCH_DINNER.length) return true;
+  if (s.pool && s.pool.snacks && s.pool.snacks.length !== DEFAULT_SNACKS.length) return true;
+  return false;
+}
+
+// Debounced writer — used by both local and cloud modes.
+let _saveDebounceTimer = null;
+const SAVE_DEBOUNCE_MS = 350;
+
+function saveState() {
+  if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer);
+  _saveDebounceTimer = setTimeout(_doSave, SAVE_DEBOUNCE_MS);
+}
+
+function _doSave() {
+  if (CLOUD.enabled && CLOUD.currentUser && CLOUD.householdRef) {
+    setSyncBadge("syncing");
+    CLOUD.householdRef.set(state).then(() => {
+      setSyncBadge("synced");
+    }).catch(err => {
+      console.error("Sync write failed:", err);
+      setSyncBadge("error");
+      showToast("Sync error — changes saved locally. Will retry when online.");
+    });
+  } else {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.error("Local save failed:", e);
+    }
+  }
+}
+
+let state = defaultState();  // Real data populated by initApp() based on mode.
 
 // ====================================================================
 // DATE HELPERS
@@ -1085,11 +1353,24 @@ function openSettings() {
         </div>
       </details>
 
+      ${CLOUD.enabled && CLOUD.currentUser ? `
+      <details>
+        <summary>Account</summary>
+        <div style="margin-top:8px;font-size:13px;color:#6b7280;">
+          Signed in as <strong>${escapeHtml(CLOUD.currentUser.email || "")}</strong>
+        </div>
+        <button class="small" style="margin-top:8px;" onclick="signOutCloud()">Sign out</button>
+        <div style="font-size:12px;color:#9ca3af;margin-top:6px;">
+          Signing out doesn't delete the shared plan from the cloud — it just signs this device out. Sign back in to resume.
+        </div>
+      </details>
+      ` : ""}
+
       <details>
         <summary>Reset all data</summary>
         <div style="margin-top:8px;">
           <button class="danger" onclick="resetAll()">Reset to defaults</button>
-          <div style="font-size:12px;color:#9ca3af;margin-top:6px;">Clears your customized pool, rules, and history. Cannot be undone.</div>
+          <div style="font-size:12px;color:#9ca3af;margin-top:6px;">${CLOUD.enabled ? "Clears the shared cloud plan and any custom meals or rules. Everyone signed in will see the reset. Cannot be undone." : "Clears your customized pool, rules, and history. Cannot be undone."}</div>
         </div>
       </details>
 
@@ -1380,7 +1661,17 @@ document.addEventListener("click", function(e) {
   menu.classList.remove("show");
 });
 
-render();
+// Initialize the app — branch on whether we're in cloud or local mode
+(function initApp() {
+  const cloudOk = initCloud();
+  if (cloudOk) {
+    showLoadingUI();
+  } else {
+    state = loadState();
+    showMainApp();
+    render();
+  }
+})();
 </script>
 </body>
 </html>
