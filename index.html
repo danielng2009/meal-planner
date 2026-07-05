@@ -960,6 +960,34 @@ function minDistTo(map, key, idx) {
   }
   return min;
 }
+// Returns { same, past, future } for display in the swap modal.
+// past = magnitude of nearest past occurrence (or Infinity), future similar for future.
+// same = true if any occurrence is at exactly idx (target day).
+function distanceInfo(map, key, idx) {
+  const s = map[key];
+  const out = { same: false, past: Infinity, future: Infinity };
+  if (!s || s.size === 0) return out;
+  for (const u of s) {
+    const d = u - idx;
+    if (d === 0) out.same = true;
+    else if (d < 0) { if (-d < out.past) out.past = -d; }
+    else { if (d < out.future) out.future = d; }
+  }
+  return out;
+}
+// Formats a hint like "used yesterday" / "next in 3 days" / "used 2 days ago, next in 5 days".
+// Only mentions past/future occurrences within 14 days; otherwise "fresh choice".
+function formatMealHint(mealDist) {
+  if (!mealDist) return "fresh choice";
+  if (mealDist.same) return "used today elsewhere";
+  const past = (mealDist.past !== Infinity && mealDist.past <= 14) ? mealDist.past : null;
+  const future = (mealDist.future !== Infinity && mealDist.future <= 14) ? mealDist.future : null;
+  if (past === null && future === null) return "fresh choice";
+  const pastText = past === null ? null : (past === 1 ? "used yesterday" : `used ${past} days ago`);
+  const futureText = future === null ? null : (future === 1 ? "next used tomorrow" : `next used in ${future} days`);
+  if (pastText && futureText) return `${pastText}, ${futureText}`;
+  return pastText || futureText;
+}
 
 function pickBestCandidate(candidates, slot, dayIdx, usage) {
   let best = null;
@@ -1148,7 +1176,9 @@ function openSwapModal(dayIdx, slot) {
     const sinceMeal = distMeal === Infinity ? 999 : distMeal;
     const sinceCat = distCat === Infinity ? 999 : distCat;
     const isEligible = eligibleSet ? eligibleSet.has(c.id) : true;
-    return { c, sinceMeal, sinceCat, isEligible };
+    // Directional info for the display hint (nearest past + nearest future, separately)
+    const mealDist = distanceInfo(usage.meals, c.id, dayIdx);
+    return { c, sinceMeal, sinceCat, isEligible, mealDist };
   });
   scored.sort((a, b) => {
     if (a.sinceCat !== b.sinceCat) return b.sinceCat - a.sinceCat;
@@ -1189,13 +1219,9 @@ function openSwapModal(dayIdx, slot) {
     </div>`;
   }
 
-  function renderCandidate({ c, sinceMeal }) {
+  function renderCandidate({ c, sinceMeal, mealDist }) {
     const isCurrent = c.id === currentMealId;
-    const hint = sinceMeal >= 999 || sinceMeal > 14
-      ? "fresh choice"
-      : sinceMeal === 0 ? "used today elsewhere"
-      : sinceMeal === 1 ? "used 1 day away"
-      : `used ${sinceMeal} days away`;
+    const hint = formatMealHint(mealDist);
     const catTag = c.category.replace(/-/g, " ");
     return `<div class="swap-option ${isCurrent ? "current" : ""}" onclick="swapTo(${dayIdx},'${slot}','${c.id}','planned')">
       <div>
