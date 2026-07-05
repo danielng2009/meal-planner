@@ -1680,13 +1680,13 @@ window.resetAll = function() {
 function openPoolEditor() {
   const categoriesLD = ["chicken-rice","fried-rice","japanese-rice","chinese-rice","pasta","ramen","noodle","beehoon"];
   const categoriesSnack = ["fruit","nuts","cereal","biscuit","other"];
+  const categoriesBreakfast = ["bread","pastry","egg","cake","biscuit","cereal","combo","other"];
 
   let html = `
     <div class="modal" style="max-width:720px;">
       <h2>Edit Meal Pool</h2>
       <div class="modal-subtitle">Add, rename, recategorize, or remove meals. Click Regenerate after saving to apply.</div>
 
-      <div class="pool-section">
       <div class="pool-section">
         <h3>Lunch & Dinner (${state.pool.lunchDinner.length})</h3>
         <div id="lunchDinnerList"></div>
@@ -1710,14 +1710,14 @@ function openPoolEditor() {
       <div class="pool-section">
         <h3>Breakfasts (${state.pool.breakfasts.length})</h3>
         <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">
-          Breakfasts are auto-generated from solo items + 2-item combos. Editing breakfasts directly will be added later.
+          The default breakfasts were auto-generated from 2-item combos. You can rename, recategorize, remove, or add your own here. Item-level spacing (tracking shared ingredients across combos) only applies to the pre-generated entries.
         </div>
-        <details>
-          <summary>Show current breakfast options</summary>
-          <div style="font-size:12px;color:#6b7280;margin-top:6px;line-height:1.6;">
-            ${state.pool.breakfasts.map(b => `&bull; ${escapeHtml(b.name)}`).join("<br>")}
-          </div>
-        </details>
+        <div id="breakfastList"></div>
+        <div class="add-row">
+          <input id="newBreakfastName" placeholder="New breakfast name">
+          <select id="newBreakfastCat">${categoriesBreakfast.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
+          <button onclick="addBreakfast()">Add</button>
+        </div>
       </div>
 
       <div class="modal-footer">
@@ -1729,6 +1729,7 @@ function openPoolEditor() {
   openModal(html);
   renderLunchDinnerList();
   renderSnackList();
+  renderBreakfastList();
 }
 
 function renderLunchDinnerList() {
@@ -1799,6 +1800,49 @@ window.addSnack = function() {
   if (!name) return showToast("Enter a name.");
   const id = "sn_custom_" + Date.now();
   state.pool.snacks.push({ id, name, category: cat });
+  saveState();
+  openPoolEditor();
+};
+
+function renderBreakfastList() {
+  const list = document.getElementById("breakfastList");
+  if (!list) return;
+  const categoriesBreakfast = ["bread","pastry","egg","cake","biscuit","cereal","combo","other"];
+  list.innerHTML = state.pool.breakfasts.map((m, idx) => {
+    // If the meal's stored category isn't in our editor list, show it as-is via an extra option
+    const cats = categoriesBreakfast.includes(m.category)
+      ? categoriesBreakfast
+      : [m.category, ...categoriesBreakfast];
+    return `
+      <div class="pool-item">
+        <input class="name-input" value="${escapeHtml(m.name)}" oninput="updateBreakfast(${idx},'name',this.value)">
+        <select onchange="updateBreakfast(${idx},'category',this.value)">
+          ${cats.map(c=>`<option value="${escapeHtml(c)}" ${c===m.category?"selected":""}>${escapeHtml(c)}</option>`).join("")}
+        </select>
+        <button class="small danger" onclick="removeBreakfast(${idx})">&times;</button>
+      </div>
+    `;
+  }).join("");
+}
+
+window.updateBreakfast = function(idx, field, val) {
+  state.pool.breakfasts[idx][field] = val;
+  saveState();
+};
+window.removeBreakfast = function(idx) {
+  if (!confirm("Remove " + state.pool.breakfasts[idx].name + "?")) return;
+  state.pool.breakfasts.splice(idx, 1);
+  saveState();
+  openPoolEditor();
+};
+window.addBreakfast = function() {
+  const name = document.getElementById("newBreakfastName").value.trim();
+  const cat = document.getElementById("newBreakfastCat").value;
+  if (!name) return showToast("Enter a name.");
+  const id = "bf_custom_" + Date.now();
+  // Custom entries have no `items` — item-level spacing simply doesn't apply to them.
+  // Meal-level and category-level spacing still work.
+  state.pool.breakfasts.push({ id, name, category: cat });
   saveState();
   openPoolEditor();
 };
