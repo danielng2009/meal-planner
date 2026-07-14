@@ -1,3 +1,7 @@
+https://raw.githubusercontent.com/danielng2009/meal-planner/main/index.html
+→ https://raw.githubusercontent.com/danielng2009/meal-planner/main/index.html
+Content-Type: text/plain; charset=utf-8
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -117,6 +121,20 @@
     box-shadow: 0 0 0 2px rgba(45,106,79,0.15);
   }
   .day-card.past { opacity: 0.55; }
+  .day-card.past:hover { opacity: 0.8; }
+  .past-toggle {
+    width: 100%;
+    padding: 8px 12px;
+    margin: 0 0 12px 0;
+    background: #faf7f2;
+    border: 1px dashed #d6cfc2;
+    border-radius: 8px;
+    color: #6b7280;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .past-toggle:hover { background: #f3efe7; color: #374151; }
   .day-card .day-header {
     display: flex; justify-content: space-between; align-items: baseline;
     padding-bottom: 6px;
@@ -401,6 +419,8 @@
 
   <div class="stat-bar" id="statBar"></div>
 
+  <div id="pastToggleRow" style="display:none;"></div>
+
   <div class="grid" id="planGrid"></div>
 </div>
 
@@ -541,6 +561,11 @@ const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const GEN_SLOT_ORDER = ["breakfast", "lunch", "dinner", "snack"];
 // Display order shown in each day card
 const SLOT_ORDER = ["breakfast", "snack", "lunch", "dinner"];
+
+// Plan window shape (v3.6): a rolled plan covers [today - PAST_DAYS, today + FUTURE_DAYS - 1].
+// The past tail keeps recent days first-class and editable (hidden behind a toggle in the UI).
+const PAST_DAYS = 5;
+const FUTURE_DAYS = 14;
 const SLOT_LABELS = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Snack" };
 
 // ====================================================================
@@ -868,9 +893,10 @@ function getFixedAssignment(date, slot) {
 // PLAN GENERATOR
 // ====================================================================
 
-function generatePlan(startISO, cellAnchors = null) {
+function generatePlan(startISO, cellAnchors = null, numDays = FUTURE_DAYS) {
   // cellAnchors: Map of "YYYY-MM-DD|slot" -> cell content to preserve (past days + locked future cells)
   const start = fromISO(startISO);
+  const todayIso = todayISO();
   const days = [];
 
   // Usage trackers — each map: key -> Set<dayIdx> (day index relative to plan start; negative from history)
@@ -893,7 +919,7 @@ function generatePlan(startISO, cellAnchors = null) {
       const parts = key.split("|");
       const iso = parts[0], slot = parts[1];
       const idx = Math.floor((fromISO(iso) - start) / 86400000);
-      if (idx < 0 || idx >= 14) continue;
+      if (idx < 0 || idx >= numDays) continue;
       if (cell && cell.mealId) {
         const m = findMeal(cell.mealId);
         if (m) {
@@ -907,7 +933,28 @@ function generatePlan(startISO, cellAnchors = null) {
     }
   }
 
-  for (let i = 0; i < 14; i++) {
+  // 3) Pre-populate fixed-meal weekly rules (lookahead). These cells are known in
+  // advance just like anchors; without this, the picker can't see e.g. Wednesday's
+  // fixed Pasta Aglio Olio coming and may place another pasta on Tuesday.
+  // Anchored cells skip this (the anchor wins and was already recorded above).
+  for (let i = 0; i < numDays; i++) {
+    const date = addDays(start, i);
+    const iso = toISO(date);
+    if (iso < todayIso) continue;  // past cells are never rule-filled
+    for (const slot of GEN_SLOT_ORDER) {
+      if (cellAnchors && cellAnchors.get(`${iso}|${slot}`)) continue;
+      const fixed = getFixedAssignment(date, slot);
+      if (fixed && fixed.type === "fixed-meal") {
+        const fm = findMeal(fixed.mealId);
+        if (fm) {
+          addUse(usage.meals, fm.id, i);
+          addUse(usage.categories, fm.category, i);
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < numDays; i++) {
     const date = addDays(start, i);
     const iso = toISO(date);
     const day = { date: iso, breakfast: null, lunch: null, dinner: null, snack: null };
@@ -922,7 +969,11 @@ function generatePlan(startISO, cellAnchors = null) {
         continue;
       }
 
-      // b. Check fixed weekly rule
+      // b. Never auto-fill an unanchored PAST cell — the plan must not fabricate
+      // what was actually eaten. It stays empty ("not recorded") and tappable.
+      if (iso < todayIso) continue;
+
+      // c. Check fixed weekly rule
       const fixed = getFixedAssignment(date, slot);
       if (fixed) {
         if (fixed.type === "grandma") {
@@ -940,7 +991,7 @@ function generatePlan(startISO, cellAnchors = null) {
         continue;
       }
 
-      // c. Pick from pool (date passed so eligible-list restriction applies)
+      // d. Pick from pool (date passed so eligible-list restriction applies)
       const candidates = candidatePoolFor(slot, date);
       if (candidates.length === 0) {
         day[slot] = null;
@@ -1084,8 +1135,12 @@ function render() {
 }
 
 function renderHeader() {
-  const start = fromISO(state.plan.startDate);
-  const end = addDays(start, 13);
+  // Label the visible planning range (today onward) — the hidden past tail would
+  // make the range look like it starts in the past.
+  const today = todayISO();
+  const visStartISO = state.plan.startDate > today ? state.plan.startDate : today;
+  const start = fromISO(visStartISO);
+  const end = fromISO(state.plan.days[state.plan.days.length - 1].date);
   document.getElementById("dateRangeLabel").textContent =
     `${formatShortDate(start)} — ${formatShortDate(end)}, ${end.getFullYear()}`;
 }
@@ -1099,13 +1154,14 @@ function renderStats() {
   let grandmaCount = 0;
   let lockedCount = 0;
   for (const d of days) {
+    // Stats describe the plan from today onward; the past tail is a record, not a plan.
+    if (d.date < today) continue;
     for (const slot of SLOT_ORDER) {
       const v = d[slot];
       if (!v) continue;
       if (v.kind === "grandma") grandmaCount++;
       else if (v.mealId) { usedMealIds.add(v.mealId); plannedCount++; }
-      // Count locks only on today + future cells (past is implicitly anchored, not user-locked)
-      if (v.locked && d.date >= today) lockedCount++;
+      if (v.locked) lockedCount++;
     }
   }
   bar.innerHTML =
@@ -1115,12 +1171,38 @@ function renderStats() {
     `<span>🔒 <strong>${lockedCount}</strong> locked</span>`;
 }
 
+// Per-device UI state for the past-days toggle — intentionally NOT in `state`, so one
+// parent expanding past days on their phone doesn't expand it on the other's.
+let showPastDays = false;
+
+window.togglePastDays = function() {
+  showPastDays = !showPastDays;
+  render();
+};
+
+function renderPastToggle(pastCount) {
+  const row = document.getElementById("pastToggleRow");
+  if (!row) return;
+  if (pastCount === 0) {
+    row.style.display = "none";
+    row.innerHTML = "";
+    return;
+  }
+  row.style.display = "block";
+  const label = showPastDays
+    ? "▴ Hide past days"
+    : `▾ Show past ${pastCount} day${pastCount === 1 ? "" : "s"} (view / edit what was eaten)`;
+  row.innerHTML = `<button class="past-toggle" onclick="togglePastDays()">${label}</button>`;
+}
+
 function renderGrid() {
   const grid = document.getElementById("planGrid");
   grid.innerHTML = "";
   const today = todayISO();
+  renderPastToggle(state.plan.days.filter(d => d.date < today).length);
   for (let i = 0; i < state.plan.days.length; i++) {
     const day = state.plan.days[i];
+    if (day.date < today && !showPastDays) continue;
     const date = fromISO(day.date);
     const card = document.createElement("div");
     card.className = "day-card";
@@ -1140,7 +1222,7 @@ function renderGrid() {
       const row = document.createElement("div");
       row.className = `meal-row ${slot}`;
       let label = SLOT_LABELS[slot];
-      let mealName = "—";
+      let mealName = isPast ? "(not recorded)" : "—";
       let isClickable = true;
       if (cell) {
         if (cell.kind === "grandma") {
@@ -1223,10 +1305,13 @@ function openSwapModal(dayIdx, slot) {
   const otherGroup    = eligibleSet ? scored.filter(s => !s.isEligible) : [];
 
   const dateStr = `${DOW_LABELS[date.getDay()]} ${formatShortDate(date)}`;
+  const isPastCell = day.date < todayISO();
   let html = `
     <div class="modal">
-      <h2>Swap ${SLOT_LABELS[slot]} — ${dateStr}</h2>
-      <div class="modal-subtitle">Pick a replacement. Suggestions at top are best for variety.</div>
+      <h2>${isPastCell ? "Edit" : "Swap"} ${SLOT_LABELS[slot]} — ${dateStr}</h2>
+      <div class="modal-subtitle">${isPastCell
+        ? "This day is in the past — record what was actually eaten."
+        : "Pick a replacement. Suggestions at top are best for variety."}</div>
   `;
 
   // Special action buttons
@@ -1324,24 +1409,29 @@ function computeUsageAroundDay(targetIdx) {
 
 window.swapTo = function(dayIdx, slot, mealId, kind) {
   const day = state.plan.days[dayIdx];
-  // Every swap auto-locks the cell so Regenerate preserves it.
+  const isPast = day.date < todayISO();
+  // Swaps auto-lock FUTURE cells so Regenerate preserves them. Past cells are always
+  // preserved by Regenerate anyway, so they stay unlocked (no lock icon shown either).
+  const lock = !isPast;
   if (kind === "grandma") {
-    day[slot] = { kind: "grandma", label: "At Grandma's", locked: true };
+    day[slot] = { kind: "grandma", label: "At Grandma's", locked: lock };
   } else if (kind === "clear") {
-    day[slot] = { kind: "cleared", locked: true };
+    day[slot] = { kind: "cleared", locked: lock };
   } else {
     const m = findMeal(mealId);
     if (m) {
       // Preserve fixed-meal kind so user sees it was a fixed slot if it was
       const existing = day[slot];
       const kindToUse = existing && existing.kind === "fixed-meal" ? "fixed-meal" : "planned";
-      day[slot] = { kind: kindToUse, mealId: m.id, name: m.name, locked: true };
+      day[slot] = { kind: kindToUse, mealId: m.id, name: m.name, locked: lock };
     }
   }
   saveState();
   closeModal();
   render();
-  showToast("Swapped & locked. Hit Regenerate to refresh the rest of the plan around this.");
+  showToast(isPast
+    ? "Past day updated. Future suggestions will take this into account."
+    : "Swapped & locked. Hit Regenerate to refresh the rest of the plan around this.");
 };
 
 window.toggleLock = function(dayIdx, slot, event) {
@@ -1377,25 +1467,60 @@ function showToast(msg) {
 // AUTO-ROLL — slide the plan window forward to start at today
 // ====================================================================
 
-// Called on app load. If plan.startDate is in the past, slide the window forward
-// so the first day is today. Preserves cells that overlap, generates only new tail
-// days, and pushes elapsed days into history.
-// Returns true if any change was made.
+// Called on app load (and before regenerates). Normalizes the plan window to
+// [today - PAST_DAYS, today + FUTURE_DAYS - 1]. Each surviving cell is sourced in
+// priority order: old plan cell → history backfill (past dates, real recorded meals)
+// → non-scoring weekly-rule placeholder (past dates, grandma / fixed-text only)
+// → generator (future dates only). Days falling off the front go into history.
+// Idempotent. Returns true if any change was made.
 function maybeAutoRoll() {
   if (!state.plan || !state.plan.startDate || !Array.isArray(state.plan.days) || state.plan.days.length === 0) return false;
   const today = todayISO();
-  if (state.plan.startDate >= today) return false;
+  if (state.plan.startDate > today) return false;  // future-dated plan: leave untouched
 
-  const start = fromISO(state.plan.startDate);
-  const todayDate = fromISO(today);
-  const daysToRoll = Math.floor((todayDate - start) / 86400000);
-  if (daysToRoll <= 0) return false;
+  const targetLen = PAST_DAYS + FUTURE_DAYS;
+  const targetStart = toISO(addDays(fromISO(today), -PAST_DAYS));
+  if (state.plan.startDate === targetStart && state.plan.days.length === targetLen) return false;
 
-  // 1) Push elapsed days into history (deduped by date+slot)
   if (!Array.isArray(state.history)) state.history = [];
-  const lastElapsedIdx = Math.min(daysToRoll, state.plan.days.length);
-  for (let i = 0; i < lastElapsedIdx; i++) {
-    const d = state.plan.days[i];
+
+  // 1) Anchor every cell that survives into the new window.
+  const oldCells = new Map();
+  for (const d of state.plan.days) {
+    for (const slot of GEN_SLOT_ORDER) {
+      if (d[slot]) oldCells.set(`${d.date}|${slot}`, d[slot]);
+    }
+  }
+  const cellAnchors = new Map();
+  for (let i = 0; i < targetLen; i++) {
+    const date = addDays(fromISO(targetStart), i);
+    const iso = toISO(date);
+    for (const slot of GEN_SLOT_ORDER) {
+      const key = `${iso}|${slot}`;
+      const oldCell = oldCells.get(key);
+      if (oldCell) { cellAnchors.set(key, oldCell); continue; }
+      if (iso >= today) continue;  // future gaps are the generator's job
+      // Past date not covered by the old plan: backfill from history if we recorded it.
+      const h = state.history.find(x => x.date === iso && x.slot === slot);
+      if (h && h.mealId) {
+        const m = findMeal(h.mealId);
+        if (m) { cellAnchors.set(key, { kind: "planned", mealId: m.id, name: m.name, locked: false }); continue; }
+      }
+      // Cosmetic backfill: weekly non-meal routines (Grandma's, fixed text) are
+      // near-certain true and carry no mealId, so they can't pollute variety scoring.
+      const fixed = getFixedAssignment(date, slot);
+      if (fixed && fixed.type === "grandma") {
+        cellAnchors.set(key, { kind: "grandma", label: fixed.label || "At Grandma's", locked: false });
+      } else if (fixed && fixed.type === "fixed-text") {
+        cellAnchors.set(key, { kind: "fixed-text", label: fixed.label, locked: false });
+      }
+      // else: left unset — renders as "(not recorded)", tappable.
+    }
+  }
+
+  // 2) Push days that fall off the front of the window into history (meals only, deduped).
+  for (const d of state.plan.days) {
+    if (d.date >= targetStart) continue;
     for (const slot of GEN_SLOT_ORDER) {
       const v = d[slot];
       if (!v || !v.mealId) continue;
@@ -1408,27 +1533,16 @@ function maybeAutoRoll() {
       }
     }
   }
-  // Trim history to last 21 days
-  const cutoff = toISO(addDays(new Date(), -21));
-  state.history = state.history.filter(h => h.date >= cutoff);
 
-  // 2) Build anchors from cells that still overlap the new window
-  // New window: today .. today+13. Old plan covers startDate .. startDate+(plan.days.length-1).
-  // Overlap range in old plan indices: daysToRoll .. plan.days.length-1
-  const cellAnchors = new Map();
-  for (let i = daysToRoll; i < state.plan.days.length; i++) {
-    const d = state.plan.days[i];
-    for (const slot of GEN_SLOT_ORDER) {
-      const cell = d[slot];
-      if (!cell) continue;
-      cellAnchors.set(`${d.date}|${slot}`, cell);
-    }
-  }
+  // 3) INVARIANT: history holds only dates strictly BEFORE the plan window. In-window
+  // past meals live in the plan itself — never both, or variety scoring would double
+  // count them. Also trim to the 21-day retention limit.
+  const cutoff = toISO(addDays(fromISO(today), -21));
+  state.history = state.history.filter(h => h.date >= cutoff && h.date < targetStart);
 
-  // 3) Regenerate. With all overlapping cells anchored, the algorithm only fills the
-  // new tail days at the end of the window. Fixed-rule cells re-apply naturally.
-  state.startDateISO = today;
-  state.plan = generatePlan(today, cellAnchors);
+  // 4) Regenerate. Anchors carry everything known; the generator fills only future gaps.
+  state.startDateISO = targetStart;
+  state.plan = generatePlan(targetStart, cellAnchors, targetLen);
   return true;
 }
 
@@ -1455,6 +1569,9 @@ function regenerateFresh() {
 }
 
 function doRegenerate({ respectLocks }) {
+  // Normalize the window first (handles the app sitting open past midnight, and owns
+  // all history push/trim bookkeeping — see the invariant in maybeAutoRoll).
+  maybeAutoRoll();
   const today = todayISO();
   // Build cellAnchors: past cells always anchored; future cells anchored only if locked (and respectLocks)
   const cellAnchors = new Map();
@@ -1469,33 +1586,7 @@ function doRegenerate({ respectLocks }) {
       }
     }
   }
-  // Push completed days to history
-  for (const d of state.plan.days) {
-    if (d.date >= today) continue;
-    for (const slot of GEN_SLOT_ORDER) {
-      const v = d[slot];
-      if (!v || !v.mealId) continue;
-      const m = findMeal(v.mealId);
-      if (!m) continue;
-      if (!state.history.some(h => h.date === d.date && h.slot === slot)) {
-        const entry = { date: d.date, slot, mealId: m.id, category: m.category };
-        if (slot === "breakfast" && m.items) entry.bfItems = [...m.items];
-        state.history.push(entry);
-      }
-    }
-  }
-  // Trim history to last 21 days from today
-  const cutoff = toISO(addDays(new Date(), -21));
-  state.history = state.history.filter(h => h.date >= cutoff);
-
-  // Determine new start date: if plan already covers today, keep startDate. Else move to today.
-  let newStartISO = state.plan.startDate;
-  if (today > state.plan.days[state.plan.days.length - 1].date) {
-    newStartISO = today;
-    state.startDateISO = newStartISO;
-  }
-
-  state.plan = generatePlan(newStartISO, cellAnchors);
+  state.plan = generatePlan(state.plan.startDate, cellAnchors, state.plan.days.length);
   saveState();
   render();
   if (respectLocks) showToast("Plan regenerated. Locked cells preserved.");
