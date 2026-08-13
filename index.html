@@ -198,6 +198,12 @@ Content-Type: text/plain; charset=utf-8
   }
   .meal-row.grandma:hover { background: #fde68a; border-color: #fbbf24; }
   .meal-row.grandma .meal-name { color: #92400e; font-style: italic; }
+  .meal-row.out {
+    background: #e0f2fe;
+    border-color: #bae6fd;
+  }
+  .meal-row.out:hover { background: #bae6fd; border-color: #7dd3fc; }
+  .meal-row.out .meal-name { color: #075985; font-style: italic; }
   .meal-row.fixed {
     background: #ede9fe; border-color: #ddd6fe;
   }
@@ -1228,6 +1234,9 @@ function renderGrid() {
         if (cell.kind === "grandma") {
           row.classList.add("grandma");
           mealName = cell.label;
+        } else if (cell.kind === "out") {
+          row.classList.add("out");
+          mealName = cell.label;
         } else if (cell.kind === "fixed-meal" || cell.kind === "fixed-text") {
           row.classList.add("fixed");
           mealName = cell.name || cell.label;
@@ -1325,10 +1334,14 @@ function openSwapModal(dayIdx, slot) {
     </div>`;
   }
 
-  // Mark as grandma's option
+  // Non-meal statuses (v3.7: Grandma's and Eating out are separate kinds)
   html += `<div class="swap-section-label">Special</div>`;
   html += `<div class="swap-option" onclick="swapTo(${dayIdx},'${slot}',null,'grandma')">
-    <div>Mark as eating out / at Grandma's</div>
+    <div>At Grandma's</div>
+    <div class="cat-tag">no plan</div>
+  </div>`;
+  html += `<div class="swap-option" onclick="swapTo(${dayIdx},'${slot}',null,'out')">
+    <div>Eating out</div>
     <div class="cat-tag">no plan</div>
   </div>`;
   if (slot === "snack" || slot === "breakfast" || slot === "lunch" || slot === "dinner") {
@@ -1415,6 +1428,8 @@ window.swapTo = function(dayIdx, slot, mealId, kind) {
   const lock = !isPast;
   if (kind === "grandma") {
     day[slot] = { kind: "grandma", label: "At Grandma's", locked: lock };
+  } else if (kind === "out") {
+    day[slot] = { kind: "out", label: "Eating out", locked: lock };
   } else if (kind === "clear") {
     day[slot] = { kind: "cleared", locked: lock };
   } else {
