@@ -369,6 +369,27 @@ Content-Type: text/plain; charset=utf-8
   .sync-badge.offline .dot { background: #f59e0b; }
   .sync-badge.error { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
   .sync-badge.error .dot { background: #ef4444; }
+  /* ---- Print view (v3.8): paper monthly planner, hidden on screen ---- */
+  #printRoot { display: none; }
+  @media print {
+    @page { size: A4 landscape; margin: 8mm; }
+    body > *:not(#printRoot) { display: none !important; }
+    #printRoot { display: block !important; }
+    .print-month { page-break-after: always; }
+    .print-month:last-child { page-break-after: auto; }
+    .pm-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2mm; }
+    .pm-title { font-size: 14pt; font-weight: 700; }
+    .pm-stamp { font-size: 8pt; color: #666; }
+    .pm-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .pm-table th { border: 0.3mm solid #888; padding: 1mm; font-size: 8pt; background: #f0f0f0; }
+    .pm-table td { border: 0.3mm solid #888; vertical-align: top; height: 34mm; padding: 1mm 1.2mm; font-size: 7pt; line-height: 1.2; overflow: hidden; }
+    .pm-table.pm-rows-6 td { height: 28mm; }
+    .pm-table td.pm-blank { background: #f3f3f3; }
+    .pm-daynum { font-weight: 700; font-size: 8.5pt; margin-bottom: 0.8mm; }
+    .pm-meal { margin: 0 0 0.7mm 0; }
+    .pm-slot { font-weight: 600; color: #444; }
+    .pm-special { font-style: italic; }
+  }
 </style>
 </head>
 <body>
@@ -410,6 +431,7 @@ Content-Type: text/plain; charset=utf-8
     <div class="actions">
       <button onclick="openSettings()">⚙ Settings</button>
       <button onclick="openPoolEditor()">📝 Edit Pool</button>
+      <button onclick="openPrintView()">🖨 Print</button>
       <div class="split-button">
         <button class="primary split-main" onclick="regenerateFromToday()">🔄 Regenerate</button>
         <button class="primary split-arrow" onclick="toggleRegenMenu(event)" title="More regenerate options">▾</button>
@@ -417,6 +439,14 @@ Content-Type: text/plain; charset=utf-8
           <button onclick="closeRegenMenu();regenerateFresh();">
             <div style="font-weight:600;font-size:13px;">Regenerate fresh</div>
             <div style="font-size:11px;color:#6b7280;margin-top:2px;">Clear all locks and reshuffle. Keeps your pool, rules, and history.</div>
+          </button>
+          <button onclick="closeRegenMenu();lockAllFuture();">
+            <div style="font-weight:600;font-size:13px;">🔒 Lock all future days</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px;">Freeze the whole plan so Regenerate can't change it.</div>
+          </button>
+          <button onclick="closeRegenMenu();unlockAllFuture();">
+            <div style="font-weight:600;font-size:13px;">🔓 Unlock all future days</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px;">Release all locks without reshuffling anything.</div>
           </button>
         </div>
       </div>
@@ -431,6 +461,7 @@ Content-Type: text/plain; charset=utf-8
 </div>
 
 <div id="modalRoot"></div>
+<div id="printRoot"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -571,7 +602,7 @@ const SLOT_ORDER = ["breakfast", "snack", "lunch", "dinner"];
 // Plan window shape (v3.6): a rolled plan covers [today - PAST_DAYS, today + FUTURE_DAYS - 1].
 // The past tail keeps recent days first-class and editable (hidden behind a toggle in the UI).
 const PAST_DAYS = 5;
-const FUTURE_DAYS = 14;
+const FUTURE_DAYS = 63;  // TEMP (v3.8): extended from 14 to cover the 4 Oct - 26 Nov 2026 solo-parenting stretch. Revert to 14 after the trip.
 const SLOT_LABELS = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Snack" };
 
 // ====================================================================
@@ -1456,6 +1487,112 @@ window.toggleLock = function(dayIdx, slot, event) {
   day[slot].locked = !day[slot].locked;
   saveState();
   render();
+};
+
+// ====================================================================
+// LOCK ALL / UNLOCK ALL (v3.8) — freeze or release the whole future plan
+// ====================================================================
+
+window.lockAllFuture = function() {
+  const today = todayISO();
+  let n = 0;
+  for (const d of state.plan.days) {
+    if (d.date < today) continue;
+    for (const slot of GEN_SLOT_ORDER) {
+      const cell = d[slot];
+      if (cell && !cell.locked) { cell.locked = true; n++; }
+    }
+  }
+  saveState();
+  render();
+  showToast("Locked " + n + " cells. Regenerate will now preserve the entire plan.");
+};
+
+window.unlockAllFuture = function() {
+  const today = todayISO();
+  let n = 0;
+  for (const d of state.plan.days) {
+    if (d.date < today) continue;
+    for (const slot of GEN_SLOT_ORDER) {
+      const cell = d[slot];
+      if (cell && cell.locked) { cell.locked = false; n++; }
+    }
+  }
+  saveState();
+  render();
+  showToast("Unlocked " + n + " cells.");
+};
+
+// ====================================================================
+// PRINT VIEW (v3.8) — paper monthly planner, A4 landscape, room to write
+// ====================================================================
+
+const PM_MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function printCellLines(day) {
+  const lines = [];
+  const order = ["breakfast", "snack", "lunch", "dinner"];
+  const tags = { breakfast: "B", snack: "S", lunch: "L", dinner: "D" };
+  for (const slot of order) {
+    const cell = day[slot];
+    let txt = "", special = false;
+    if (!cell) continue;
+    if (cell.kind === "grandma" || cell.kind === "out") { txt = cell.label; special = true; }
+    else if (cell.kind === "fixed-text") { txt = cell.label; }
+    else if (cell.kind === "cleared") { txt = "\u2014"; }
+    else if (cell.mealId || cell.name) { txt = cell.name; }
+    if (!txt) continue;
+    lines.push('<div class="pm-meal"><span class="pm-slot">' + tags[slot] + ':</span> <span' + (special ? ' class="pm-special"' : "") + '>' + escapeHtml(txt) + '</span></div>');
+  }
+  return lines.join("");
+}
+
+function buildMonthTable(monthDate, byDate) {
+  const y = monthDate.getFullYear(), mo = monthDate.getMonth();
+  const daysInMonth = new Date(y, mo + 1, 0).getDate();
+  const startCol = (new Date(y, mo, 1).getDay() + 6) % 7;  // Monday-first
+  const weekRows = Math.ceil((startCol + daysInMonth) / 7);
+  const now = new Date();
+  let html = '<div class="print-month"><div class="pm-header"><span class="pm-title">' + PM_MONTH_NAMES[mo] + ' ' + y + '</span><span class="pm-stamp">Family Meal Planner \u2014 printed ' + formatShortDate(now) + ' ' + now.getFullYear() + '</span></div>';
+  html += '<table class="pm-table' + (weekRows >= 6 ? ' pm-rows-6' : '') + '"><thead><tr>';
+  for (const d of ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]) html += '<th>' + d + '</th>';
+  html += '</tr></thead><tbody><tr>';
+  let col = 0;
+  for (; col < startCol; col++) html += '<td class="pm-blank"></td>';
+  for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+    if (col === 7) { html += '</tr><tr>'; col = 0; }
+    const iso = toISO(new Date(y, mo, dayNum));
+    const day = byDate.get(iso);
+    if (day) {
+      html += '<td><div class="pm-daynum">' + dayNum + '</div>' + printCellLines(day) + '</td>';
+    } else {
+      html += '<td class="pm-blank"><div class="pm-daynum">' + dayNum + '</div></td>';
+    }
+    col++;
+  }
+  for (; col < 7; col++) html += '<td class="pm-blank"></td>';
+  html += '</tr></tbody></table></div>';
+  return html;
+}
+
+window.openPrintView = function() {
+  const root = document.getElementById("printRoot");
+  if (!root || !state.plan) return;
+  const today = todayISO();
+  const days = state.plan.days.filter(d => d.date >= today);
+  if (days.length === 0) { showToast("Nothing to print."); return; }
+  const byDate = new Map(days.map(d => [d.date, d]));
+  const first = fromISO(days[0].date);
+  const last = fromISO(days[days.length - 1].date);
+  let html = "";
+  let cur = new Date(first.getFullYear(), first.getMonth(), 1);
+  const endMonth = new Date(last.getFullYear(), last.getMonth(), 1);
+  while (cur <= endMonth) {
+    html += buildMonthTable(cur, byDate);
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+  }
+  root.innerHTML = html;
+  window.print();
 };
 
 // ====================================================================
